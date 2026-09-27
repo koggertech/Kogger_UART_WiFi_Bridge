@@ -1,0 +1,4 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "WiFi_UART_Bridge") (type "KiCad") (uri "${KIPRJMOD}/WiFi_UART_Bridge.pretty") (options "") (descr "Footprints of this board"))
+)

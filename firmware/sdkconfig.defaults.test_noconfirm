@@ -1,0 +1,4 @@
+# TEST ONLY overlay: an image that never confirms itself after an update and must be rolled back
+# by the bootloader. Used with tools/sbp_update.py --expect-rollback. Never ship it.
+CONFIG_WB_OTA_TEST_NO_CONFIRM=y
+# The rollback comes after the normal CONFIG_WB_OTA_CONFIRM_S (180 s by default, 90..3600).

@@ -1,0 +1,72 @@
+menu "HeadUnit Wi-Fi bridge"
+
+    choice WB_LINK
+        prompt "Link to the host"
+        default WB_LINK_USB_SERIAL_JTAG
+        help
+            USB Serial/JTAG: the C3's native USB (GPIO18 D-, GPIO19 D+); the host sees
+            /dev/ttyACM* (VID 303A, PID 1001). Console must then be on UART0.
+            UART: through an external USB-UART bridge (CP2102N/CH343) or directly to host UART pins.
+
+        config WB_LINK_USB_SERIAL_JTAG
+            bool "USB Serial/JTAG (native USB)"
+        config WB_LINK_UART
+            bool "UART"
+    endchoice
+
+    if WB_LINK_UART
+        config WB_LINK_UART_NUM
+            int "UART number"
+            range 0 1
+            default 0
+        config WB_LINK_UART_BAUD
+            int "Baud rate"
+            default 921600
+            help
+                921600 is verified with the bench CP2105 (2026-09-25). Higher rates depend on the
+                USB-UART bridge (CP2102N up to 3 Mbaud); the C3 UART supports up to 5 Mbaud.
+                Must match the host daemon's --baud.
+        config WB_LINK_UART_TX
+            int "TX GPIO"
+            default 21
+        config WB_LINK_UART_RX
+            int "RX GPIO"
+            default 20
+        config WB_LINK_UART_RTS
+            int "RTS GPIO (-1 = no hardware flow control)"
+            default -1
+        config WB_LINK_UART_CTS
+            int "CTS GPIO (-1 = no hardware flow control)"
+            default -1
+    endif
+
+    config WB_BRIDGE_IP
+        string "Bridge (ESP) address on the point-to-point link"
+        default "10.99.0.1"
+        help
+            Must match the host daemon (--peer). The link uses a /30.
+
+    config WB_HOST_IP
+        string "Host address on the point-to-point link"
+        default "10.99.0.2"
+
+    config WB_OTA_CONFIRM_S
+        int "Seconds a freshly updated image has to confirm itself"
+        range 90 3600
+        default 180
+        help
+            After an update the new image must receive a frame addressed to it (SBP from any line
+            or the network, or a SLIP control line) and run for 60 s; otherwise it reboots after this time and the
+            bootloader boots the previous image again (docs/UPDATE.md).
+
+    config WB_OTA_TEST_NO_CONFIRM
+        bool "TEST ONLY: never confirm an updated image"
+        default n
+        help
+            Builds an image that must be rolled back. Used by tools/sbp_update.py --expect-rollback.
+
+    config WB_HOSTNAME
+        string "DHCP hostname of the Wi-Fi station"
+        default "headunit-wifi"
+
+endmenu

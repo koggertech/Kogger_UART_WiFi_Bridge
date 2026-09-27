@@ -1,0 +1,12 @@
+[Unit]
+Description=ESP32-C3 Wi-Fi bridge (serial link <-> espwifi0)
+After=network-pre.target systemd-resolved.service
+Wants=network-pre.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/espwifi/espwifi_bridge.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

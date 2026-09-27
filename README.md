@@ -1,2 +1,114 @@
-# Kogger_UART_WiFi_Bridge
-Open-source ESP32-C3 UART to Wi-Fi bridge: firmware (ESP-IDF), KiCad 10 board, datasheet. Two UART lines relayed to UDP/TCP as whole frames, station or AP with DHCP, control over Kogger SBP, OTA with rollback.
+# Kogger Wi‑Fi Bridge
+
+Firmware for a small ESP32‑C3‑MINI‑1U board that puts serial devices on Wi‑Fi.
+
+- **Frame‑aware UART ↔ Wi‑Fi relay.** Two UART lines, each mapped to its own UDP port or TCP client.
+  Traffic travels as whole protocol frames (Kogger SBP KP1/KP2, u‑blox UBX, MAVLink 1/2) packed into
+  datagrams of at most 512 bytes. Anything else passes through as raw bytes, in order.
+- **Kogger SBP device** (board ID 87). A host that speaks Kogger SBP uses the same serial port to configure
+  Wi‑Fi, the relay and the network, to read state and statistics, and to update the firmware. The same works over
+  the second UART, and everything except firmware updates works over the network. The update exchange is
+  the one KoggerApp uses for Kogger devices; its file dialog needs `*.ufww` added ([docs/UPDATE.md](docs/UPDATE.md)).
+  The Wi‑Fi settings need a host that implements the `ID_WIFI` / `ID_WIFI_NET` contract
+  ([docs/SBP_WIFI.md](docs/SBP_WIFI.md)); `host/sbpframe.py` has Python helpers for the frame and for
+  most payloads (state, scan, saved networks, radio, role, access point, addresses, lines, clients).
+- **Station or access point.** As a station the module joins an existing network: up to 8 saved networks,
+  auto‑connect to the strongest one. As an access point it runs its own network with a DHCP server for up
+  to 10 clients.
+- **IP bridge (optional).** IPv4 packets over SLIP on the serial link, NAT into Wi‑Fi. This is for a Linux
+  host without a Wi‑Fi adapter; the daemon is in `host/`.
+- **Safe updates.** Two firmware slots, the image is checked before the switch, and an image that does not
+  prove itself is rolled back automatically.
+
+![Architecture](docs/img/architecture.svg)
+
+![Reference board](docs/img/board_iso.png)
+
+## Example application
+
+HeadUnit is a boat display computer, a Linux board that talks Kogger SBP to the boat's equipment. It has no usable
+Wi‑Fi of its own, so the module sits on one of its UARTs at 3 Mbaud and joins the boat's access point. The equipment
+on the boat sends Kogger SBP, MAVLink and UBX; the module relays this traffic between the head unit and the boat over
+UDP. On the same port the module answers its own SBP address 87 and sends its Wi‑Fi state reports.
+
+In the access‑point role the same board can be the boat‑side end: it bridges a sonar or autopilot
+UART to phones and laptops on its own network.
+
+## Key figures (firmware 0.11.0)
+
+| | |
+|---|---|
+| Module | ESP32‑C3‑MINI‑1U (RISC‑V, 160 MHz, 4 MB flash, U.FL antenna connector) |
+| Board | 20 × 30 mm, 4 layers; two JST GH 4‑pin connectors; supply 4.5–24 V on X1 (3.3 V / 1 A step‑down module) |
+| Wi‑Fi | 802.11 b/g/n, 2.4 GHz, 20/40 MHz; Espressif LR mode optional; TX power 2–20 dBm in 11 steps |
+| Roles | station (default) or access point (open, WPA2, WPA2/WPA3; channels 1–11; up to 10 clients) |
+| Serial lines | X1 = UART0 (host port), X2 = UART1; 9600–4 000 000 baud, 8N1; defaults 921600 and 115200 |
+| Relay | per line: off, UDP (fixed peer, last ≤ 4 senders, or broadcast) or TCP client; frames up to 4096 B |
+| Control | Kogger SBP: `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 and the common device IDs, from any line or the network |
+| Update | over SBP on a wired line; A/B slots of 1.875 MiB; SHA‑256 check; confirmation after 60 s, rollback at 180 s |
+| Image size | 0.93 MB, 47 % of a slot (0.11.0, UART build) |
+| Serial throughput | baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud |
+
+The serial line, not Wi‑Fi, is the bottleneck at these rates. Measured figures, test conditions and charts
+are in the [datasheet](docs/KoggerWiFi_datasheet.pdf) and in [docs/DESIGN.md](docs/DESIGN.md).
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/HARDWARE.md](docs/HARDWARE.md) | board, connectors, power, wiring, flashing without auto‑reset |
+| [hardware/](hardware/) | KiCad project of the board, schematic PDF, Gerbers, BOM, pick‑and‑place |
+| [docs/SBP_WIFI.md](docs/SBP_WIFI.md) | Kogger SBP contract: frame, common IDs, `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 |
+| [docs/NETWORK.md](docs/NETWORK.md) | station / access point, AP settings, address and DHCP, UART lines and their ports |
+| [docs/RELAY.md](docs/RELAY.md) | frame‑aware relay: framing, packing, buffers, back‑pressure, statistics |
+| [docs/UPDATE.md](docs/UPDATE.md) | firmware update over SBP: procedure, safety argument, test log |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | IP bridge: SLIP framing, text commands, host daemon |
+| [docs/PARAMETERS.md](docs/PARAMETERS.md) | every setting with default and range, build options, timing constants, buffers |
+| [docs/DESIGN.md](docs/DESIGN.md) | architecture, tasks, memory, ESP‑IDF pitfalls, measurements, open issues |
+| [docs/BUILD_AND_TEST.md](docs/BUILD_AND_TEST.md) | build, flash, PC tests, bench tools, host install |
+| [docs/KoggerWiFi_datasheet.pdf](docs/KoggerWiFi_datasheet.pdf) | datasheet: summary, parameters and charts |
+| [SECURITY.md](SECURITY.md) | security model and what to change before deployment |
+| [CHANGELOG.md](CHANGELOG.md) | release history and verification status |
+
+## Repository layout
+
+| Directory | Contents |
+|---|---|
+| `firmware/` | ESP‑IDF project (C) |
+| `host/` | Linux daemon for the IP bridge, CLI client, udev/systemd/NetworkManager files; Python mirrors of the wire formats |
+| `tests/` | PC tests: the Python mirrors against the firmware's portable C, compiled on the PC, byte for byte |
+| `tools/` | bench tools: flashing, SBP/relay/ping checks, update and packaging, charts and datasheet |
+| `hardware/` | KiCad 10 project of the reference board and its fabrication outputs |
+| `docs/` | documentation, charts, datasheet |
+
+## Quick start
+
+```
+python tests/test_all.py                       # PC tests, no hardware: "43 checks, 0 failed"
+cd firmware
+idf.py -B build-uart -D SDKCONFIG=build-uart/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.uart" build
+```
+
+Flashing, the native‑USB variant and the bench checks are described in
+[docs/BUILD_AND_TEST.md](docs/BUILD_AND_TEST.md). Tested with ESP‑IDF v5.5.5.
+
+## Status
+
+- **Verified on hardware (0.1–0.11):**
+  - SBP device checks;
+  - baud rates 9600 to 2 Mbaud on a bench adapter, 2/3/4 Mbaud on a head unit's UART;
+  - IP bridge through NAT;
+  - station auto‑connect;
+  - firmware update, recovery from a lost chunk, a corrupted image refused;
+  - relay to a boat network over UDP;
+  - 0.11.0 installed on a head unit's module over SBP at 3 Mbaud (7/7 checks), all settings kept.
+- **Not yet verified on hardware:** the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; the access‑point role; UART line 1; writing `ID_WIFI_NET` settings; the native USB variant; the IP bridge daemon on a Linux host.
+
+The status of each release is in [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+MIT, © 2026 KOGGER LLC, <https://kogger.tech>. See [LICENSE](LICENSE). Third‑party notices: [THIRD_PARTY.md](THIRD_PARTY.md).
+
+The KOGGER name and logo (bottom silkscreen of the board) are not licensed under the MIT License. Remove the logo
+from the bottom silkscreen before making modified boards or boards not supplied by KOGGER LLC.

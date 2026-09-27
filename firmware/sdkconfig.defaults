@@ -1,0 +1,44 @@
+# Common settings. Link = USB Serial/JTAG (default). For the UART link add sdkconfig.defaults.uart,
+# see docs/BUILD_AND_TEST.md.
+CONFIG_IDF_TARGET="esp32c3"
+
+# ESP32-C3-MINI-1U: 4 MB flash
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# USB Serial/JTAG carries the link, so nothing else may print there.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# Routing between the host link and the Wi-Fi station
+CONFIG_LWIP_IP_FORWARD=y
+CONFIG_LWIP_IPV4_NAPT=y
+CONFIG_LWIP_TCP_WND_DEFAULT=11520
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=11520
+
+# Relay sockets: a Wi-Fi burst larger than 6 datagrams was dropped inside lwIP, uncounted (0.11).
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=16
+
+# The access point admits up to 10 clients (netcfg.c): the DHCP server must hold as many leases,
+# otherwise it takes the oldest lease away from a connected client.
+CONFIG_LWIP_DHCPS_MAX_STATION_NUM=10
+
+# More buffers for forwarding throughput
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32
+
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# The console is not visible in the UART variant: a starved idle task must end in a reboot that
+# the host sees as "* HELLO ... reset=TASK_WDT", not in a silent hang.
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# Safe updates (docs/UPDATE.md): two OTA slots, and a new image that does not confirm itself is
+# rolled back by the bootloader. Changing these needs one serial flash (bootloader + table).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# UART ISR keeps running while flash is erased during an update (cache disabled), so the RX FIFO
+# does not overflow at high baud rates.
+CONFIG_UART_ISR_IN_IRAM=y

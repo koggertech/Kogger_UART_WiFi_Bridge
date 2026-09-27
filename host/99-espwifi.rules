@@ -1,0 +1,4 @@
+# ESP32-C3 native USB (USB Serial/JTAG, VID 303A PID 1001) -> /dev/espwifi
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", SYMLINK+="espwifi", GROUP="dialout", MODE="0660"
+# UART-link variant through a CP2102N: add the adapter's serial number to avoid grabbing other CP210x devices, e.g.
+# SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{serial}=="<serial>", SYMLINK+="espwifi"

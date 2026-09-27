@@ -1,0 +1,8 @@
+# Overlay: link over UART0 (USB-UART bridge on the dev board), console moves to USB Serial/JTAG.
+CONFIG_WB_LINK_UART=y
+CONFIG_WB_LINK_UART_NUM=0
+CONFIG_WB_LINK_UART_BAUD=921600
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+# The ROM/2nd-stage bootloader still prints on UART0 at reset; the host decoder drops it (CRC).
+CONFIG_BOOTLOADER_LOG_LEVEL_NONE=y

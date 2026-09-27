@@ -1,0 +1,460 @@
+#!/usr/bin/env python3
+"""Machine checks for the wire formats: Python mirror self-tests, then the firmware's portable C
+(frame.c, proto.c, sbp.c) compiled on the host and compared byte-for-byte with host/wbframe.py and
+host/sbpframe.py.
+
+  python tests/test_all.py        # exit 0 = all PASS
+
+C compiler: $CC, else gcc/cc/clang on PATH, else MSVC (vswhere). No compiler -> C part FAILS
+(it is not silently skipped).
+"""
+import os
+import random
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, 'host'))
+import wbframe as W  # noqa: E402
+import sbpframe as SB  # noqa: E402
+import kframe as KF  # noqa: E402
+
+FW = os.path.join(ROOT, 'firmware', 'main')
+results = []
+NL = chr(10)
+
+
+def check(name, cond, detail=''):
+    results.append((name, bool(cond)))
+    print('%s  %s%s' % ('PASS' if cond else 'FAIL', name, ('  -- ' + detail) if (detail and not cond) else ''))
+
+
+# ---------------------------------------------------------------- Python-only
+def py_tests():
+    rng = random.Random(1)
+    frames = [(rng.choice([W.T_IP, W.T_CTL]), bytes(rng.choice([0xC0, 0xDB, rng.randrange(256)])
+                                                  for _ in range(rng.randrange(0, 1501)))) for _ in range(200)]
+    stream = b''.join(W.encode(t, p) for t, p in frames)
+    d = W.Decoder()
+    got = []
+    i = 0
+    while i < len(stream):  # random split points
+        n = rng.randrange(1, 700)
+        got += d.feed(stream[i:i + n])
+        i += n
+    check('py: 200 random frames round-trip with random splits', got == frames)
+
+    d = W.Decoder()
+    junk = b'ESP-ROM:esp32c3-api1-20210207' + bytes([13, 10]) + b'rst:0x1 (POWERON)' + bytes([13, 10])
+    got = d.feed(junk + W.encode(W.T_CTL, b'* HELLO fw=0.1.0'))
+    check('py: boot-log junk before a frame is rejected, frame survives',
+          got == [(W.T_CTL, b'* HELLO fw=0.1.0')] and d.crc_errors == 1, str((got, d.crc_errors)))
+
+    enc = bytearray(W.encode(W.T_IP, b'E' + bytes(30)))
+    enc[5] ^= 0x01
+    d = W.Decoder()
+    check('py: single bit flip -> CRC error', d.feed(bytes(enc)) == [] and d.crc_errors == 1)
+
+    d = W.Decoder()
+    check('py: bad escape -> discarded', d.feed(bytes([0xC0, 0x01, 0xDB, 0x41, 0, 0, 0xC0])) == [] and d.discarded == 1)
+
+    d = W.Decoder()
+    big = W.encode(W.T_IP, bytes(1600))
+    check('py: oversize frame discarded', d.feed(big) == [] and d.discarded == 1)
+
+    for s in ['\u041b\u043e\u0434\u043a\u0430 Kogger 5G', 'a b%c', '', 'x' * 32, bytes([0, 0x7F, 0xFF]).decode('latin1')]:
+        e = W.pct_encode(s)
+        ok = ' ' not in e and all(0x21 <= ord(ch) <= 0x7E for ch in e) and W.pct_decode(e) == s.encode('utf-8')
+        check('py: pct round-trip %s' % ascii(s), ok, e)
+    try:
+        W.pct_decode('%G1')
+        check('py: pct rejects bad escape', False)
+    except ValueError:
+        check('py: pct rejects bad escape', True)
+
+    # SBP mirror self-tests
+    f = SB.encode(0, SB.mode(SB.SETTING, 0, resp=True), SB.ID_UART,
+                  SB.KEY_CONFIRM.to_bytes(4, 'little') + bytes([1]) + (2000000).to_bytes(4, 'little'))
+    check('py: SBP frame layout = KoggerApp setBaudrate(2000000)',
+          f[:6] == bytes([0xBB, 0x55, 0x00, 0x82, 0x18, 9]) and len(f) == 17)
+    d = SB.Decoder()
+    got = d.feed(b'junk' + bytes([0xBB]) + f + bytes([0xBB, 0xBB, 0x55]) + f[2:])  # "BB BB 55" syncs on the 2nd BB
+    check('py: SBP decoder resyncs on BB BB 55', len(got) == 2 and all(g.id == SB.ID_UART for g in got)
+          and d.check_errors == 0, str(got))
+    bad = bytearray(f)
+    bad[8] ^= 1
+    d = SB.Decoder()
+    check('py: SBP bit flip -> checksum error', d.feed(bytes(bad)) == [] and d.check_errors == 1)
+    check('py: X.25 (CRC-16/MCRF4XX) known answer: "123456789" -> 0x6F91', KF.x25(b'123456789') == 0x6F91,
+          hex(KF.x25(b'123456789')))
+    fr = KF.Framer(4096)
+    hb = KF.mav1(0, bytes(9))
+    fr.feed(b'noise' + hb + KF.mav1(0, bytes(9), extra=51) + KF.mav2(33, bytes(28), signed=True))
+    fr.flush(force=True)
+    kinds = [(k, fl) for k, _, fl in fr.out]
+    check('py: MAVLink v1 frame found, wrong CRC_EXTRA rejected, signed v2 found',
+          ('F', 4) in kinds and ('F', 5) in kinds and sum(1 for k in kinds if k[0] == 'F') == 2, kinds)
+    p = SB.connect_payload('Boat-Network', 'pass1234')
+    check('py: ID_WIFI v3 payload layout', p == bytes([1, 12]) + b'Boat-Network' + bytes([8]) + b'pass1234')
+
+
+# ---------------------------------------------------------------- C harness
+def find_compiler():
+    cc = os.environ.get('CC')
+    if cc:
+        return ('gcc', cc)
+    for c in ('gcc', 'cc', 'clang'):
+        if shutil.which(c):
+            return ('gcc', c)
+    vswhere = os.path.join(os.environ.get('ProgramFiles(x86)', 'C:' + os.sep + 'Program Files (x86)'),
+                           'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+    if os.path.exists(vswhere):
+        p = subprocess.run([vswhere, '-latest', '-products', '*', '-property', 'installationPath'],
+                           stdout=subprocess.PIPE, text=True).stdout.strip()
+        bat = os.path.join(p, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat')
+        if os.path.exists(bat):
+            return ('msvc', bat)
+    return (None, None)
+
+
+def build(tmp):
+    kind, tool = find_compiler()
+    srcs = [os.path.join(ROOT, 'tests', 'c_harness.c')] + [os.path.join(FW, f) for f in
+                                                          ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c')]
+    exe = os.path.join(tmp, 'c_harness.exe' if os.name == 'nt' else 'c_harness')
+    if kind == 'gcc':
+        cmd = [tool, '-std=c99', '-O2', '-Wall', '-Wextra', '-Werror', '-I', FW, '-o', exe] + srcs
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    elif kind == 'msvc':
+        bat = os.path.join(tmp, 'b.bat')
+        with open(bat, 'w') as f:
+            f.write('@call "%s" >nul' % tool + chr(13) + NL)
+            # /Fo"dir\\": a single backslash before the quote would escape it for cl's parser
+            f.write('cl /nologo /O2 /W4 /WX /wd4996 /I "%s" /Fe"%s" /Fo"%s%s%s" %s' % (
+                FW, exe, tmp, os.sep, os.sep, ' '.join('"%s"' % s for s in srcs)) + chr(13) + NL)
+        r = subprocess.run(['cmd', '/c', bat], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    else:
+        check('c: compiler found', False, 'set CC or install gcc/MSVC')
+        return None
+    check('c: harness builds with warnings as errors (%s)' % kind, r.returncode == 0, r.stdout[-2000:])
+    return exe if r.returncode == 0 else None
+
+
+def lcg_vectors():
+    state = 12345
+    out = []
+    for v, n in enumerate([0, 1, 2, 3, 7, 64, 255, 1000, 1500]):
+        t = W.T_CTL if v % 2 else W.T_IP
+        p = bytearray()
+        for _ in range(n):
+            state = (state * 1103515245 + 12345) & 0xFFFFFFFF
+            r = (state >> 16) & 0xFF
+            p.append(0xC0 if (r & 7) == 0 else 0xDB if (r & 7) == 1 else r)
+        out.append((t, bytes(p)))
+    return out
+
+
+def c_tests(exe, tmp):
+    def run(args, inp=None):
+        return subprocess.run([exe] + args, input=inp, stdout=subprocess.PIPE, text=True).stdout
+
+    lines = run(['enc']).split(NL)
+    vec = lcg_vectors()
+    ok = True
+    for (t, p), line in zip(vec, lines):
+        ct, cn, chex = line.split()
+        if int(ct) != t or int(cn) != len(p) or bytes.fromhex(chex) != W.encode(t, p):
+            ok = False
+    check('c: frame_encode == wbframe.encode on %d vectors (incl. 1500 B, C0/DB-heavy)' % len(vec), ok)
+
+    rng = random.Random(7)
+    stream = bytearray(b'ESP-ROM:esp32c3 junk' + bytes([13, 10]))
+    expect = []
+    for i in range(300):
+        t = rng.choice([W.T_IP, W.T_CTL])
+        p = bytes(rng.choice([0xC0, 0xDB, rng.randrange(256)]) for _ in range(rng.randrange(0, 1501)))
+        e = bytearray(W.encode(t, p))
+        kind = i % 10
+        if kind == 3:
+            e[len(e) // 2] ^= 0x20       # corrupt
+        elif kind == 7:
+            e[1:1] = bytes([0xDB, 0x41])  # invalid escape
+        else:
+            expect.append((t, p))
+        stream += e
+    stream += W.encode(W.T_IP, bytes(1700))  # oversize
+    path = os.path.join(tmp, 'stream.bin')
+    with open(path, 'wb') as f:
+        f.write(stream)
+    out = run(['dec', path]).strip().split(NL)
+    cframes = [(int(l.split()[1]), bytes.fromhex(l.split()[2]) if len(l.split()) > 2 else b'')
+               for l in out if l.startswith('F ')]
+    cstats = [int(x) for x in out[-1].split()[1:]]
+    pd = W.Decoder()
+    pframes = pd.feed(bytes(stream))
+    check('c: decoder output == expected frames (%d of 300 valid)' % len(expect), cframes == expect)
+    check('c: decoder output == Python decoder', cframes == pframes)
+    check('c: decoder stats == Python stats (ok/crc/discarded)',
+          cstats == [pd.frames_ok, pd.crc_errors, pd.discarded], '%s vs %s' % (
+              cstats, [pd.frames_ok, pd.crc_errors, pd.discarded]))
+
+    samples = [b'', b'Kogger Boat', '\u041b\u043e\u0434\u043a\u0430 5G'.encode(), b'%%%', bytes(range(256)), b'a=b c']
+    out = run(['pct'], ''.join(s.hex() + NL for s in samples)).split(NL)
+    ok = True
+    for i, s in enumerate(samples):
+        e, dline = out[2 * i][2:], out[2 * i + 1][2:]
+        if e != W.pct_encode(s) or bytes.fromhex(dline) != s:
+            ok = False
+    check('c: pct_encode == wbframe.pct_encode, pct_decode round-trips', ok)
+
+    parse_in = NL.join(['c1.7 CONNECT ssid=Kogger%20Boat pass=12345678', '  9   STATUS  ', 'only',
+                        'x SCAN a b c d e f g h i j k l m']) + NL
+    out = run(['parse'], parse_in).split(NL)
+    check('c: proto_parse tag/cmd/args + proto_arg',
+          out[0] == 'P 0 c1.7 CONNECT 2 | ssid=Kogger%20Boat pass=12345678 | ssid=Kogger%20Boat'
+          and out[1] == 'P 0 9 STATUS 0 | | ssid=<none>' and out[2] == 'P -1' and out[3] == 'P -1', repr(out[:4]))
+
+    # ---- SBP
+    lines = run(['sbpenc']).split(NL)
+    st, ok, nvec = 777, True, 0
+    for v, n in enumerate([0, 1, 2, 7, 64, 200, 255]):
+        pl = bytearray()
+        for _ in range(n):
+            st = (st * 1103515245 + 12345) & 0xFFFFFFFF
+            r = (st >> 16) & 0xFF
+            pl.append(0xBB if (r & 7) == 0 else 0x55 if (r & 7) == 1 else r)
+        route, mode_, id_ = (v * 37) & 0xFF, SB.mode(v % 3 + 1, v % 8, v & 1, (v >> 1) & 1), 0x57 ^ v
+        cr, cm, ci, cl, ch = lines[v].split()
+        if (int(cr), int(cm), int(ci), int(cl)) != (route, mode_, id_, n) or \
+                bytes.fromhex(ch) != SB.encode(route, mode_, id_, pl):
+            ok = False
+        nvec += 1
+    check('c: sbp_encode == sbpframe.encode on %d vectors (0..255 B, BB/55-heavy)' % nvec, ok)
+
+    rng = random.Random(11)
+    # A real "BB 55" in junk starts a bogus frame whose length byte swallows what follows (KoggerApp's
+    # parser does the same), so the junk here has a lone BB only; both decoders are compared below anyway.
+    stream = bytearray(bytes([0, 0xBB, 0x00]) + b' ESP-ROM junk ' + bytes([0xC0, 0xC0]))
+    expect = []
+    for i in range(400):
+        pl = bytes(rng.choice([0xBB, 0x55, rng.randrange(256)]) for _ in range(rng.randrange(0, 256)))
+        route, mode_, id_ = rng.randrange(256), rng.randrange(256), rng.randrange(256)
+        e = bytearray(SB.encode(route, mode_, id_, pl))
+        if i % 9 == 4:
+            e[-1] ^= 0x5A                  # corrupt checksum
+        else:
+            expect.append((route, mode_, id_, pl))
+        if i % 13 == 6:
+            e[0:0] = bytes([0xBB])         # BB BB 55
+        stream += e
+    path = os.path.join(tmp, 'sbp.bin')
+    with open(path, 'wb') as fh:
+        fh.write(stream)
+    out = run(['sbpdec', path]).strip().split(NL)
+    cfr = []
+    for l in out:
+        if l.startswith('F '):
+            parts = l.split()
+            cfr.append((int(parts[1]), int(parts[2]), int(parts[3]), bytes.fromhex(parts[6]) if len(parts) > 6 else b''))
+    cst = [int(x) for x in out[-1].split()[1:]]
+    pd = SB.Decoder()
+    pfr = [(f.route, f.mode, f.id, f.payload) for f in pd.feed(bytes(stream))]
+    check('c: SBP decoder == expected frames (%d of 400 valid)' % len(expect), cfr == expect)
+    check('c: SBP decoder == Python decoder, stats equal', cfr == pfr and cst == [pd.frames_ok, pd.check_errors],
+          '%s vs %s' % (cst, [pd.frames_ok, pd.check_errors]))
+
+    relay_tests(run, tmp)
+
+
+# ---------------------------------------------------------------- relay framing (kframe + kpack)
+RELAY_CAP = 4096
+
+
+def rnd_bytes(rng, n, avoid=()):
+    out = bytearray()
+    while len(out) < n:
+        b = rng.choice([0xBB, 0xCC, 0x55, rng.randrange(256)])
+        if b not in avoid:
+            out.append(b)
+    return bytes(out)
+
+
+MAV_IDS = sorted(KF.MAV)
+
+
+def relay_stream(rng, hostile):
+    """Returns (stream, valid frames <= RELAY_CAP in order, count of frames longer than 512)."""
+    stream, frames = bytearray(), []
+    for _ in range(900):
+        r = rng.random()
+        if r < 0.28:
+            f = KF.kp1(rng.randrange(256), rng.randrange(256), rng.randrange(256), rnd_bytes(rng, rng.randrange(256)))
+        elif r < 0.36:
+            f = KF.ubx(rng.randrange(256), rng.randrange(256), rnd_bytes(rng, rng.choice([0, 20, 100, 600, 1500])))
+        elif r < 0.44:
+            mid = rng.choice([i for i in MAV_IDS if i < 256])
+            f = KF.mav1(mid, rnd_bytes(rng, KF.MAV[mid][1]), rng.randrange(256), rng.randrange(256), rng.randrange(256))
+        elif r < 0.52:
+            mid = rng.choice(MAV_IDS)
+            f = KF.mav2(mid, rnd_bytes(rng, rng.randrange(1, KF.MAV[mid][2] + 1)), rng.randrange(256),
+                        signed=rng.random() < 0.3)
+        elif r < 0.55:  # look like MAVLink but are not: wrong CRC_EXTRA, wrong v1 length, unknown id
+            mid = rng.choice([i for i in MAV_IDS if i < 256])
+            bad = rng.choice([KF.mav1(mid, rnd_bytes(rng, KF.MAV[mid][1]), extra=(KF.MAV[mid][0] + 1) & 0xFF),
+                              KF.mav1(mid, rnd_bytes(rng, KF.MAV[mid][1] - 1 if KF.MAV[mid][1] > 1 else 2)),
+                              KF.mav2(mid, rnd_bytes(rng, 4), extra=(KF.MAV[mid][0] + 7) & 0xFF)])
+            stream += bad
+            continue
+        elif r < 0.62:
+            n = rng.choice([rng.randrange(1, 300), rng.randrange(300, 1200), rng.randrange(1200, RELAY_CAP - 6 + 1)])
+            f = KF.kp2(rnd_bytes(rng, n))
+        elif r < 0.65:  # announces more than the buffer takes: must come through as raw, not lost
+            stream += KF.kp2(rnd_bytes(rng, RELAY_CAP + rng.randrange(1, 500)))
+            continue
+        elif r < 0.85:  # noise; the clean stream has no sync bytes in it
+            stream += rnd_bytes(rng, rng.randrange(1, 60), () if hostile else (0xBB, 0xCC, 0xB5, 0xFE, 0xFD))
+            continue
+        else:           # corrupted KP1 frame
+            f = bytearray(KF.kp1(1, 2, 3, rnd_bytes(rng, rng.randrange(1, 100))))
+            f[rng.randrange(2, len(f))] ^= 0x10
+            stream += f
+            continue
+        stream += f
+        frames.append(bytes(f))
+    return bytes(stream), frames, sum(1 for f in frames if len(f) > 512)
+
+
+def py_relay(stream, cap):
+    """Same feeding/flush schedule as `c_harness relay`: 41-byte chunks, soft idle every 24 chunks,
+    forced release at the end."""
+    fr, pk = KF.Framer(cap), KF.Packer(512)
+    units, done = [], 0
+
+    def drain():
+        nonlocal done
+        for kind, d, fl in fr.out[done:]:
+            units.append((kind, d, fl))
+            pk.unit(d)
+        done = len(fr.out)
+
+    for i in range(0, len(stream), 41):
+        fr.feed(stream[i:i + 41])
+        drain()
+        if (i // 41 + 1) % 24 == 0:
+            fr.flush()
+            drain()
+            pk.flush()
+    fr.flush(force=True)
+    drain()
+    pk.flush()
+    return units, pk.packets
+
+
+def relay_checks(tag, stream, units, packets):
+    check('%s: units concatenate to the input (nothing lost, order kept)' % tag, b''.join(u[1] for u in units) == stream)
+    check('%s: packets concatenate to the input' % tag, b''.join(packets) == stream)
+    check('%s: every packet <= 512 bytes (%d packets)' % (tag, len(packets)), all(len(p) <= 512 for p in packets))
+    # whole units up to 512 bytes never straddle a packet boundary
+    bounds, pos = set(), 0
+    for p in packets:
+        pos += len(p)
+        bounds.add(pos)
+    pos, ok = 0, True
+    for kind, d, _ in units:
+        if len(d) <= 512:
+            if any(pos < b < pos + len(d) for b in range(pos + 1, pos + len(d)) if b in bounds):
+                ok = False
+        pos += len(d)
+    check('%s: no whole frame/raw run <= 512 B is split across packets' % tag, ok)
+
+
+def adversarial_test(run, tmp):
+    """False UBX syncs every 6 bytes, each announcing ~4 KB: without the rescan budget this costs
+    ~4 KB of work per 6 input bytes. Both implementations must stay linear and agree."""
+    stream = b'\xb5\x62\x00\x00\xf0\x0f' * 10000 + KF.kp1(1, 2, 3, b'tail')
+    path = os.path.join(tmp, 'relay_adv.bin')
+    with open(path, 'wb') as fh:
+        fh.write(stream)
+    t0 = time.monotonic()
+    out = run(['relay', path, str(RELAY_CAP)]).strip().split(NL)
+    tc = time.monotonic() - t0
+    kinds = {1: 'F', 2: 'R'}
+    cunits = []
+    for l in out:
+        parts = l.split()
+        if l.startswith('U '):
+            cunits.append((kinds[int(parts[1])], bytes.fromhex(parts[3]) if len(parts) > 3 else b'', int(parts[2])))
+    t0 = time.monotonic()
+    punits, _ = py_relay(stream, RELAY_CAP)
+    tp = time.monotonic() - t0
+    check('relay adversarial: 60 KB of false syncs, C == Python, linear (C %.2f s, Python %.2f s)' % (tc, tp),
+          cunits == punits and b''.join(u[1] for u in cunits) == stream and tp < 20)
+
+
+def relay_tests(run, tmp):
+    adversarial_test(run, tmp)
+    for tag, hostile, seed in (('relay clean', False, 21), ('relay hostile', True, 22)):
+        rng = random.Random(seed)
+        stream, frames, nbig = relay_stream(rng, hostile)
+        path = os.path.join(tmp, 'relay_%d.bin' % seed)
+        with open(path, 'wb') as fh:
+            fh.write(stream)
+        out = run(['relay', path, str(RELAY_CAP)]).strip().split(NL)
+        kinds = {1: 'F', 2: 'R'}
+        cunits, cpackets = [], []
+        for l in out:
+            parts = l.split()
+            if l.startswith('U '):
+                cunits.append((kinds[int(parts[1])], bytes.fromhex(parts[3]) if len(parts) > 3 else b'', int(parts[2])))
+            elif l.startswith('P '):
+                cpackets.append(bytes.fromhex(parts[1]))
+        punits, ppackets = py_relay(stream, RELAY_CAP)
+        check('%s: C units == Python units (%d)' % (tag, len(cunits)), cunits == punits)
+        check('%s: C packets == Python packets' % tag, cpackets == ppackets)
+        relay_checks(tag, stream, cunits, cpackets)
+        if not hostile:
+            found = [d for k, d, _ in cunits if k == 'F']
+            check('%s: all %d valid frames found whole, in order (%d of them > 512 B)' % (tag, len(frames), nbig),
+                  found == frames)
+            protos = {}
+            for k, d, fl in cunits:
+                if k == 'F':
+                    protos[fl] = protos.get(fl, 0) + 1
+            names = {1: 'KP1', 2: 'KP2', 3: 'UBX', 4: 'MAV1', 5: 'MAV2'}
+            check('%s: every protocol recognised: %s' % (tag, ', '.join('%s %d' % (names[p], n) for p, n in sorted(protos.items()))),
+                  sorted(protos) == [1, 2, 3, 4, 5])
+            # a frame longer than 512 goes out as consecutive 512-byte pieces that add up to it
+            ok, pos, starts = True, 0, {}
+            for i, pkt in enumerate(cpackets):
+                starts[pos] = i
+                pos += len(pkt)
+            upos = 0
+            for k, d, _ in cunits:
+                if k == 'F' and len(d) > 512:
+                    i = starts.get(upos)
+                    pieces = []
+                    while i is not None and sum(map(len, pieces)) < len(d):
+                        pieces.append(cpackets[i])
+                        i += 1
+                    if b''.join(pieces) != d or any(len(x) != 512 for x in pieces[:-1]):
+                        ok = False
+                upos += len(d)
+            check('%s: frames > 512 B cut into 512-byte packets that add up to the frame' % tag, ok)
+
+
+def main():
+    py_tests()
+    with tempfile.TemporaryDirectory() as tmp:
+        exe = build(tmp)
+        if exe:
+            c_tests(exe, tmp)
+    failed = [n for n, ok in results if not ok]
+    print(NL + '%d checks, %d failed' % (len(results), len(failed)))
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == '__main__':
+    main()

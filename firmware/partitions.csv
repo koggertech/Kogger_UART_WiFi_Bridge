@@ -1,0 +1,9 @@
+# ESP32-C3-MINI-1U, 4 MB. Two OTA slots for safe updates (docs/UPDATE.md).
+# nvs keeps the offset and size of the default single-app table, so saved networks and
+# settings survive the switch from firmware 0.1/0.2 to this layout.
+# Name,    Type, SubType, Offset,   Size
+nvs,       data, nvs,     0x9000,   0x6000
+otadata,   data, ota,     0xF000,   0x2000
+phy_init,  data, phy,     0x11000,  0x1000
+ota_0,     app,  ota_0,   0x20000,  0x1E0000
+ota_1,     app,  ota_1,   0x200000, 0x1E0000
