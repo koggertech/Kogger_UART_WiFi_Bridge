@@ -16,7 +16,7 @@
 #include "esp_netif.h"
 #include "netcfg.h"
 
-/* ---- ID_WIFI v5 view of line 0 (kept from 0.7 for the host application) ---------------------- */
+/* ---- ID_WIFI v5 view of line 0 (kept from 0.7 for existing hosts) ---------------------------- */
 
 typedef enum { RELAY_OFF = 0, RELAY_UDP = 1, RELAY_TCP = 2 } relay_mode_t;
 

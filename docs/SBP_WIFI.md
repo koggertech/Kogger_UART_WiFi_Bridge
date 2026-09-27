@@ -60,9 +60,9 @@ network ([NETWORK.md](NETWORK.md) §5).
 - **Firmware update is accepted only over a wired line** (UART or native USB, 0.11). `ID_UPDATE` and `ID_BOOT` v1 from the network get
   ERR_RUNTIME. SBP has no authentication and the image is not signed ([UPDATE.md](UPDATE.md), [SECURITY.md](../SECURITY.md)).
 
-KoggerApp limitation: its "Set baudrate" list (`DeviceSettingsPage.qml`) ends at 2 000 000 as of September 2026. Rates
-up to 4 Mbaud need that list extended on the application side. 2, 3 and 4 Mbaud were verified with the UART of an
-RK3588 head unit.
+2, 3 and 4 Mbaud were verified with `ID_UART` v0 on the UART of an RK3588 head unit. KoggerApp's "Set baudrate" list
+(`DeviceSettingsPage.qml`) ends at 2 000 000 as of September 2026; a host that needs a higher rate sends `ID_UART`
+itself.
 
 ## 3. `ID_WIFI` = 0x57
 
@@ -198,7 +198,7 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
 
 - **v0.** The role takes effect at boot. With the reboot flag, the module carries the current rate and address over one
   boot, as after an update, and it keeps that address for this boot even while a line bridges. It moves to its
-  bridging address (the saved one, or 88 in the AP role by default) after the next reboot or after any line setting (`ID_WIFI_NET` v3
+  bridging address (the saved one, otherwise the role default: 87 station, 88 access point) after the next reboot or after any line setting (`ID_WIFI_NET` v3
   or v6, `ID_WIFI` v5).
   - **Known issue (0.11):** from the station default (address 0), the AP comes up with both lines relaying while the
     module still answers address 0, so it takes SETTING/GETTING frames meant for a device at address 0. Send an

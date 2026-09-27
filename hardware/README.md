@@ -104,5 +104,6 @@ The hardware design files are published under the same MIT license as the rest o
 (derived from KiCad `power:VCC`) and the KiCad 3D models the board refers to are covered by the KiCad libraries'
 license ([../THIRD_PARTY.md](../THIRD_PARTY.md)).
 
-The KOGGER name and logo (bottom silkscreen of the board) are not licensed under the MIT License. Remove the logo
-from the bottom silkscreen before making modified boards or boards not supplied by KOGGER LLC.
+The KOGGER logo on the bottom silkscreen of the board is not licensed under the MIT License. The fab zip in
+`hardware/outputs` includes it: before making boards that KOGGER LLC does not supply, delete the logo from B.SilkS
+and regenerate the outputs with `tools/make_hw_outputs.py`.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Bench check of the SBP relay (docs/RELAY.md): the PC plays the boat over UDP and KoggerApp over the
-serial port, and compares what comes out on each side with what went in.
+"""Bench check of the SBP relay (docs/RELAY.md): the PC plays the boat over UDP and the SBP host over
+the serial port, and compares what comes out on each side with what went in.
 
   python tools/bench_relay.py --port COM3 --pc-ip 192.168.1.10            # module and PC on one IP network
   python tools/bench_relay.py --port COM3 --pc-ip 192.168.1.10 --off      # switch the relay off afterwards

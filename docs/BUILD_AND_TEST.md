@@ -98,7 +98,8 @@ python tools/bench_sbp.py --port COM3 --write-test             # + a saved chang
 
 - `--role-test` takes the module off its access point for the duration of the test.
 - After every reboot the script looks for the module first at the address it had before (0.11 keeps it for one boot
-  after a role change with reboot), then at its bridging address and, after the switch to the access point, at 88.
+  after a role change with reboot), then at its bridging address (88 after the switch to the access point) and finally at 0, 87
+  and 88.
 - `bench_sbp.py` scans and briefly changes settings, so do not run it on a module that carries live traffic.
 
 Relay, with the module and the PC on one IP network (the PC plays the peer over UDP and the host over serial):

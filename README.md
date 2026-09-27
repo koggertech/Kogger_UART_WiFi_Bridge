@@ -80,6 +80,7 @@ are in the [datasheet](docs/KoggerWiFi_datasheet.pdf) and in [docs/DESIGN.md](do
 | `tools/` | bench tools: flashing, SBP/relay/ping checks, update and packaging, charts and datasheet |
 | `hardware/` | KiCad 10 project of the reference board and its fabrication outputs |
 | `docs/` | documentation, charts, datasheet |
+| `LICENSES/` | license notices of included third‑party material (MAVLink generated code) |
 
 ## Quick start
 
@@ -110,5 +111,6 @@ The status of each release is in [CHANGELOG.md](CHANGELOG.md).
 
 MIT, © 2026 KOGGER LLC, <https://kogger.tech>. See [LICENSE](LICENSE). Third‑party notices: [THIRD_PARTY.md](THIRD_PARTY.md).
 
-The KOGGER name and logo (bottom silkscreen of the board) are not licensed under the MIT License. Remove the logo
-from the bottom silkscreen before making modified boards or boards not supplied by KOGGER LLC.
+The KOGGER logo on the bottom silkscreen of the board is not licensed under the MIT License. The fab zip in
+`hardware/outputs` includes it: before making boards that KOGGER LLC does not supply, delete the logo from B.SilkS
+and regenerate the outputs with `tools/make_hw_outputs.py`.
