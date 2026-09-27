@@ -11,6 +11,9 @@
  *   c_harness sbpdec FILE    -> "F route mode id ck1 ck2 hex" per SBP frame, then "S ok check_errors"
  *   c_harness relay FILE CAP -> relay framing: "U kind flags hex" per unit, "P hex" per packet,
  *                               then "S frames bad_ck raw_bytes"
+ *   c_harness portinfo       -> stdin script (clock N | up/down PORT HEX | rx/tx PORT N | mrx/mtx PORT |
+ *                               p0 PORT FLAGS SLIP | p1 PORT): units cut by kframe as in the firmware,
+ *                               "P0 hex" / "P1 hex" per page
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +22,7 @@
 #include "frame.h"
 #include "kframe.h"
 #include "kpack.h"
+#include "portinfo.h"
 #include "proto.h"
 #include "sbp.h"
 
@@ -68,6 +72,23 @@ static void on_unit(void *ctx, kf_kind_t kind, const uint8_t *d, size_t len, uns
     kp_unit(p, d, len, on_packet, NULL);
 }
 
+static uint32_t pi_clock = 1;
+
+static uint32_t pi_now(void)
+{
+    return pi_clock;
+}
+
+static void on_pi_up(void *ctx, kf_kind_t kind, const uint8_t *d, size_t len, unsigned flags)
+{
+    portinfo_up((int)(intptr_t)ctx, portinfo_proto(kind, flags), d, len);
+}
+
+static void on_pi_down(void *ctx, kf_kind_t kind, const uint8_t *d, size_t len, unsigned flags)
+{
+    portinfo_down((int)(intptr_t)ctx, portinfo_proto(kind, flags), d, len);
+}
+
 static int unhex(const char *s, uint8_t *out, size_t cap)
 {
     size_t n = 0;
@@ -85,6 +106,61 @@ int main(int argc, char **argv)
 {
     static uint8_t buf[FRAME_ENCODED_MAX(FRAME_MAX_PAYLOAD)];
     static uint8_t pl[FRAME_MAX_PAYLOAD];
+    if (argc >= 2 && !strcmp(argv[1], "portinfo")) {
+        static uint8_t fb[4][2][1024];
+        static kf_t kf[4]; /* up X1, up X2, down X1, down X2 */
+        static char line[20000], hx[20000];
+        static uint8_t data[8192], out[256];
+        portinfo_init(pi_now, NULL, NULL);
+        for (int i = 0; i < 4; i++)
+            kf_init(&kf[i], fb[i][0], fb[i][1], sizeof fb[i][0]);
+        while (fgets(line, sizeof line, stdin)) {
+            char cmd[16];
+            int port = 0;
+            unsigned a = 0, b = 0;
+            if (sscanf(line, "%15s", cmd) != 1)
+                continue;
+            if (!strcmp(cmd, "clock")) {
+                sscanf(line, "%*s %u", &a);
+                pi_clock = a;
+            } else if (!strcmp(cmd, "up") || !strcmp(cmd, "down")) {
+                bool up = cmd[0] == 'u';
+                if (sscanf(line, "%*s %d %19999s", &port, hx) != 2 || port < 0 || port > 1)
+                    return 4;
+                int n = unhex(hx, data, sizeof data);
+                if (n < 0)
+                    return 3;
+                kf_t *k = &kf[(up ? 0 : 2) + port];
+                kf_feed(k, data, (size_t)n, up ? on_pi_up : on_pi_down, (void *)(intptr_t)port);
+                kf_flush(k, true, up ? on_pi_up : on_pi_down, (void *)(intptr_t)port);
+            } else if (!strcmp(cmd, "rx") || !strcmp(cmd, "tx")) {
+                sscanf(line, "%*s %d %u", &port, &a);
+                if (cmd[0] == 'r')
+                    portinfo_rx_bytes(port, a);
+                else
+                    portinfo_tx_bytes(port, a);
+            } else if (!strcmp(cmd, "mrx") || !strcmp(cmd, "mtx")) {
+                sscanf(line, "%*s %d", &port);
+                if (cmd[1] == 'r')
+                    portinfo_module_rx(port);
+                else
+                    portinfo_module_tx(port);
+            } else if (!strcmp(cmd, "p0")) {
+                sscanf(line, "%*s %d %u %u", &port, &a, &b);
+                size_t n = portinfo_page0(port, (uint8_t)a, 921600, 115200, 7, 9, b != 0, out);
+                printf("P0 ");
+                hex(out, n);
+                printf("\n");
+            } else if (!strcmp(cmd, "p1")) {
+                sscanf(line, "%*s %d", &port);
+                size_t n = portinfo_page1(port, out);
+                printf("P1 ");
+                hex(out, n);
+                printf("\n");
+            }
+        }
+        return 0;
+    }
     if (argc >= 2 && !strcmp(argv[1], "enc")) {
         static const size_t lens[] = { 0, 1, 2, 3, 7, 64, 255, 1000, 1500 };
         for (size_t v = 0; v < sizeof lens / sizeof lens[0]; v++) {

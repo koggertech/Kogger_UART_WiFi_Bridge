@@ -100,12 +100,19 @@ class Dev:
         return None
 
     def version(self, timeout=1.0):
-        """(bootMode, 'major.minor', mark) from ID_VERSION v2, or None."""
+        """(bootMode, 'major.minor', mark) from ID_VERSION v2, or None. Only the module's answer counts
+        (board 87): a device behind a bridging module may answer a request to 0 too. Since 0.12 the module
+        answers ID_VERSION to 0 from its own address (discovery), so the route of the answer becomes the
+        route of every later request: an update from 0.11 at address 0 to 0.12 at 87 follows the module."""
         self.rx.clear()
         self.send(SB.GETTING, 2, SB.ID_VERSION)
-        f = self.wait(lambda f: f.id == SB.ID_VERSION and f.ver == 2 and f.type == SB.CONTENT and not f.resp, timeout)
-        if not f or len(f.payload) != 9:
+        f = self.wait(lambda f: f.id == SB.ID_VERSION and f.ver == 2 and f.type == SB.CONTENT and not f.resp and
+                      len(f.payload) == 9 and f.payload[2] == SB.BOARD_WIFI, timeout)
+        if not f:
             return None
+        if f.route != self.route:
+            print('module answers from address %d' % f.route)
+            self.route = f.route
         return f.payload[0], '%d.%d' % (f.payload[8], f.payload[7]), f.mark
 
 
@@ -236,7 +243,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--port', required=True)
     ap.add_argument('--baud', type=int, default=921600)
-    ap.add_argument('--route', type=int, default=0)
+    ap.add_argument('--route', type=int, default=0,
+                    help='address to ask first (default 0: 0.12 answers it from its own address; a 0.11 module '
+                         'whose line bridges needs its bridging address, e.g. 87)')
     ap.add_argument('--drop', type=int, default=0, help='lose chunk N once')
     ap.add_argument('--corrupt', type=int, default=0, help='flip one byte in chunk N (image must be refused)')
     ap.add_argument('--stop', type=int, default=0, help='abandon the transfer after chunk N')

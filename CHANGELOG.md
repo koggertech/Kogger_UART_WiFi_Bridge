@@ -3,6 +3,49 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.12.0 — 2026‑09‑27
+
+The two ports become equal, and the module tells what is on each of them. Builds (UART and USB) without warnings; PC
+tests 52/52. **Bench:** updated from 0.11.0 over SBP (7/7 checks, confirmed after 65 s and a proving reboot);
+`tools/bench_ports.py` 29/29 in the access‑point and in the station role; `tools/bench_sbp.py` 38/38 in the station
+role; a role change and back kept every setting. **Field:** the head unit's module updated from 0.11.0 at 2 Mbaud
+(7/7, settings kept); with the bench module as an LR‑only access point and the head unit's module in LR only, a sonar
+on the access point's X2 reached the head unit's application (echogram shown). Not yet verified: a host on X2, LR range
+over distance.
+
+Firmware:
+- **The module answers on either port**, X1 or X2, in either role, whether a line bridges or not. X1 goes through the
+  same frame splitter as X2; the IP bridge on X1 still starts with the first SLIP frame.
+- **Fixed own address:** 87 in the station role, 88 in the access‑point role, or the one set with `ID_WIFI_NET` v6 /
+  `ID_UART` v1/v2 (saved at once). No longer 0 while no line bridges; 255 is refused like 0. The one‑boot address
+  carry‑over of 0.11 is gone, and with it its known issue.
+- **Discovery:** GETTING `ID_VERSION` to address 0 or 255 is answered from the own address and relayed as well, so
+  KoggerApp finds the module on any port and the device behind it still answers.
+- **Unsolicited frames** go to every channel that asked within the last 60 s; a port with only a device on it gets
+  nothing.
+- **Rates of both ports, one rule:** `ID_UART` v0 sets the asking port, provisionally: saved when a request arrives at
+  the new rate or with `ID_FLASH` v0, otherwise back to the old rate after 10 s (the window runs from the actual
+  switch). `ID_WIFI_NET` v3 sets the other port (or either from the network), saved at once; for the asking port's
+  own line its rate field is ignored, so a record written back with a stale rate cannot move the host's port.
+  `ID_FLASH` v0/v2 cover both ports; saved rates survive "forget lines".
+- **`ID_WIFI_NET` v7, port information:** the asking port, the rates, what is connected (host, SBP devices, MAVLink,
+  u‑blox, IP bridge, unreadable bytes), traffic by protocol in both directions, the devices heard (SBP address, board,
+  firmware, serial; MAVLink system, type, autopilot) and the network peers of the line.
+
+- State changes and reports reach every subscriber, also while a request from another channel is handled.
+- A reboot into a new image still leaves the address for a 0.11 image, so a rollback to 0.11 over SBP comes back at the
+  address the host uses; an own address of 255 saved by 0.11 falls back to the role default.
+
+Tools: `tools/bench_ports.py`; `host/sbpframe.py` gains `parse_port`, `ports_payload`, `is_discovery`; PC tests for the
+port statistics; `bench_sbp.py` accepts the read‑only v7; `sbp_update.py` and `fwinfo.py` take the module's address
+from its `ID_VERSION` answer (board 87), so an update that moves the address (0.11 at 0 → 0.12 at 87) follows it.
+
+- **LR only in the AP role** is allowed again (0.11 refused it): an access point in LR only admits Espressif stations
+  with LR, such as another module, for a long‑range module‑to‑module link; phones and laptops cannot join it.
+
+Known issues:
+- The text command `RADIO` restarts the access point without the 0.2 s delay of the SBP path.
+
 ## Hardware — 2026‑09‑27
 
 KiCad 10 project of the reference board v3 in `hardware/`: schematic, board, libraries, fabrication outputs. Its

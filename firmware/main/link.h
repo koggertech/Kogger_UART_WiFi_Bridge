@@ -2,8 +2,9 @@
  * link.h - byte transport to the host (USB Serial/JTAG or UART) with two framings on it:
  *   SLIP+CRC16 frames (IP bridge + text control, docs/PROTOCOL.md) - used by espwifi_bridge.py;
  *   Kogger SBP / KP1 frames (docs/SBP_WIFI.md) - used by KoggerApp directly.
- * Both decoders see every byte; the first valid frame after boot locks the link to its protocol
- * (the other one is ignored until reboot or an explicit link_set_proto()).
+ * The bytes go to the relay's framer (relay.c: frames for the module, discovery, bridging, port
+ * statistics) and, until the link is locked to SBP, to the SLIP decoder. The first valid frame for the
+ * module or SLIP frame after boot locks the link to its protocol (until reboot or link_set_proto()).
  */
 #pragma once
 
@@ -29,10 +30,9 @@ typedef struct {
 /** Handlers run in the link RX task; they must not block for long, must copy what they keep, and
  *  must be ready to accept frames before link_start() is called. */
 typedef void (*link_rx_handler_t)(const uint8_t *payload, size_t len);
-typedef void (*link_sbp_handler_t)(const sbp_frame_t *f);
 
-/** Install the transport driver and start the RX/TX tasks. */
-void link_start(link_rx_handler_t on_ip, link_rx_handler_t on_ctl, link_sbp_handler_t on_sbp);
+/** Install the transport driver and start the RX/TX tasks. SBP frames reach the module via relay.c. */
+void link_start(link_rx_handler_t on_ip, link_rx_handler_t on_ctl);
 
 link_proto_t link_proto(void);
 
@@ -65,6 +65,9 @@ bool link_set_baud(uint32_t baud);
 
 /** Current (or last requested, on USB) baud rate. */
 uint32_t link_baud(void);
+
+/** esp_timer time at which the last rate change took effect; 0 while one is still queued. */
+int64_t link_baud_switched_us(void);
 
 #define LINK_BAUD_MIN 9600u
 #define LINK_BAUD_MAX 4000000u

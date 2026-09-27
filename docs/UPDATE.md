@@ -101,6 +101,12 @@ question of `fwinfo.py` never reaches the module. With `--sbp-only`:
 python tools/sbp_update.py --port /dev/ttyUSB0 --baud 2000000 --route 87 --sbp-only dist/KoggerWiFi_0.11.0.ufww
 ```
 
+The script follows the module's address: it takes it from the module's `ID_VERSION` answer (board 87). A 0.12 module
+answers `ID_VERSION` to address 0 from its own address, so `--route` is needed only for a 0.11 module whose line
+bridges (then its bridging address, 87 by default). An update that moves the address, such as a 0.11 station at 0 to
+0.12 at 87, is followed. A 0.12 module also leaves its address for a 0.11 image at the reboot, so a rollback to 0.11
+comes back where the host talks to it.
+
 **Do not switch the relay off to make SLIP answer.** On 0.7.0/0.8.0 a module with the relay off and Wi‑Fi connected
 reboots every ~10 s ([RELAY.md](RELAY.md)).
 

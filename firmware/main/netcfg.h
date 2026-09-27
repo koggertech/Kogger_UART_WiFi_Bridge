@@ -47,7 +47,7 @@ typedef struct {
     uint8_t  ip[4];
     uint16_t rport;
     uint16_t lport;       /**< own UDP port; 0 = rport */
-    uint32_t baud;        /**< line 1 only (line 0 follows ID_UART) */
+    uint32_t baud;        /**< line 1: its saved rate (line 0's is NVS "baud"); running rates: ports.c */
     int8_t   tx_pin;      /**< line 1 only (default 5 = X2 pin 1), -1 = not wired: UART1 stays off */
     int8_t   rx_pin;      /**< line 1 only (default 4 = X2 pin 2) */
 } line_cfg_t;
@@ -75,8 +75,12 @@ void netcfg_line(int line, line_cfg_t *c);
 bool netcfg_line_ok(int line, const line_cfg_t *c);
 bool netcfg_set_line(int line, const line_cfg_t *c);
 
+/** Saved rate of X2 (line 1): kept in its own key, survives "forget lines"; erase = back to 115200. */
+bool netcfg_set_baud1(uint32_t baud);
+bool netcfg_erase_baud1(void);
+
 /** Pins usable for the second UART on ESP32-C3-MINI-1U (no strapping, flash, USB or UART0 pins). */
 bool netcfg_pin_ok(int pin);
 
-uint8_t netcfg_addr(void);                     /**< module SBP address while any line bridges */
-bool netcfg_set_addr(uint8_t a);               /**< 1..255; 0 is refused */
+uint8_t netcfg_addr(void);                     /**< own SBP address: saved, else 87 station / 88 AP */
+bool netcfg_set_addr(uint8_t a);               /**< 1..254; 0 and 255 are refused */

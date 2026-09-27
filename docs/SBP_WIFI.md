@@ -1,11 +1,12 @@
 # The module as a Kogger SBP device
 
-Contract version 3 (firmware 0.11.0; version 2 = 0.10.0, version 1 = 0.2.0). Changes in 0.11 are summarised at the end
-of §3 and §4. Implementation: `firmware/main/sbp.c`, `sbpdev.c`, `manager.c`, `netctl.c`. Python helpers (framing and most payloads): `host/sbpframe.py`.
-Bench check: `tools/bench_sbp.py`.
+Contract version 4 (firmware 0.12.0; version 3 = 0.11.0, version 2 = 0.10.0, version 1 = 0.2.0). Changes are
+summarised at the end of §3 and §4. Implementation: `firmware/main/sbp.c`, `sbpdev.c`, `manager.c`, `netctl.c`,
+`ports.c`, `portinfo.c`. Python helpers (framing and most payloads): `host/sbpframe.py`. Bench checks:
+`tools/bench_sbp.py`, `tools/bench_ports.py`.
 
-A host opens the module's serial port (UART, or the C3's native USB) and talks plain Kogger SBP to it, as it would to a
-sonar. The module answers its own IDs and the common device IDs. The same commands work over the second UART and over the
+A host opens either serial port of the module (X1 or X2; X1 can also be the C3's native USB) and talks plain Kogger SBP
+to it, as it would to a sonar. The module answers its own IDs and the common device IDs. The same commands work over the
 network ([NETWORK.md](NETWORK.md) §5).
 
 ## 1. Frame (KP1)
@@ -25,17 +26,25 @@ network ([NETWORK.md](NETWORK.md) §5).
 - IDs the module does not know are ignored silently, as sonars do. The `mark` bit is set after `ID_MARK` and cleared by
   a reboot and by `ID_BOOT` v0 (update window).
 
-## 2. Address, identity, port
+## 2. Address, identity, ports
 
-- **Address** (`route`): 0 by default. The module accepts SETTING and GETTING only with its own address. `ID_UART` v1
-  changes the current address; v2 changes the boot address, which `ID_FLASH` v0 saves. While any UART line bridges to
-  the network, the module uses its bridging address instead: 87 in the station role and 88 in the access‑point role
-  by default ([NETWORK.md](NETWORK.md) §4).
-- **Replies go where the request came from.** Acknowledgements and answers go back on the request's channel: the host
-  port (UART0 or USB), UART1, or the network sender, from the same UDP port. Scan results (v2) go to whoever started
-  the scan. Unsolicited frames go to the channel of the last request: state changes (v0), the periodic report (v1), v7
-  after a connection and update progress. By default that is the host port in the station role, and nowhere in the
-  access‑point role until someone asks.
+- **Two equal ports** (0.12). X1 (line 0) and X2 (line 1) work the same way: the module answers on either, in either
+  role, whether its line bridges to the network or not.
+- **Address** (`route`): **87 in the station role, 88 in the access‑point role**, or the address set with
+  `ID_WIFI_NET` v6 or `ID_UART` v1/v2 (1–254, saved at once). It does not depend on bridging (0.12; before, the
+  module sat on 0 while no line bridged). The module takes SETTING and GETTING with its own address from any channel
+  and never relays them.
+- **Discovery** (0.12). A GETTING `ID_VERSION` addressed to **0 or 255** is answered from the module's own address to
+  the channel it came from, and is still relayed like any other frame, so a device behind the module answers too.
+  KoggerApp looks for devices exactly this way (`ID_VERSION` to address 0 when a port opens, then to every known
+  device about every 300 ms), so it finds the module on either port in either role. No other frame to 0 or 255 is
+  taken by the module: a SETTING to address 0 stays the device's.
+- **Replies go where the request came from.** Acknowledgements and answers go back on the request's channel: X1, X2,
+  or the network sender, from the same UDP port. Scan results (v2) go to whoever started the scan.
+- **Unsolicited frames** — state changes (v0), the periodic report (v1), v7 after a connection, update progress — go to
+  **every channel that sent the module a request within the last 60 s**: each port on its own, plus the last network
+  sender (0.12; before, only the channel of the last request). A port that never asks the module anything, such as a
+  sonar's, receives nothing from it. KoggerApp keeps asking every known device, so its port stays subscribed.
 - **`ID_VERSION` (0x20):**
   - v0, 34 bytes: `[1]` = board **87**, `[14..17]` = serial number (lower 4 bytes of the MAC);
   - v1, 12 bytes: UID (MAC followed by zeros);
@@ -44,20 +53,29 @@ network ([NETWORK.md](NETWORK.md) §5).
 - **`ID_UART` (0x18)**, KoggerApp's `IDBinUART` layout. SET v0 `{KEY 0xC96B5D4A, U1 1, U4 baud}`.
   - Any rate from 9600 to 4 000 000 is accepted, including all standard ones (9600 … 921600, 1 000 000, 1 200 000,
     1 500 000, 2 000 000, 2 500 000, 3 000 000, 3 500 000, 4 000 000).
-  - The acknowledgement goes out at the old rate, then the module switches.
-  - The rate is saved only by `ID_FLASH` v0 and applied at boot, as on sonars. The default is 921600, which is on
-    KoggerApp's auto‑detect list.
-  - GET: v0 → `{KEY, 1, baud}`, v1 → `{KEY, 1, address}`, v2 → `{KEY, boot address}`.
-  - Since 0.10, v0 refers to the UART behind the request's channel. A request over UART1 or to line 1's UDP port
-    sets line 1's rate, which is saved at once without `ID_FLASH`. Every other request sets line 0's rate.
+  - v0 refers to the port behind the request: the UART it came through, or, for a network sender, the UART of the
+    line whose UDP port received it. The `uart` byte is ignored (KoggerApp always sends 1).
+  - The acknowledgement goes out at the old rate, then the port switches.
+  - **Saving, the same for both ports** (0.12): a change of the port the request came through is **provisional**. It
+    is saved as soon as a request for the module (own address or discovery) arrives through that port at the new rate,
+    or with `ID_FLASH` v0. Without one within **10 s** the port returns to its previous rate. A change asked from the
+    network is saved at once. So a host that switches its own port and keeps talking never loses the module, and a host
+    that cannot follow the new rate gets it back.
+  - Default rates: X1 921600 (on KoggerApp's auto‑detect list), X2 115200.
+  - GET: v0 → `{KEY, 1, baud}` of that port, v1 → `{KEY, 1, address}`, v2 → `{KEY, address}`. SET v1
+    `{KEY, U1 1, U1 address}` and v2 `{KEY, U1 address}` both set the module's own address (saved at once, the same
+    as `ID_WIFI_NET` v6); 0 and 255 → ERR_PAYLOAD. The acknowledgement comes from the old address.
+  - The rate of the other port is set with `ID_WIFI_NET` v3 (saved at once). Saved rates are port settings: the "forget
+    lines" flag of a role change keeps them.
 - **`ID_MARK` (0x21):** SET v0 `{KEY}`; GET v0 → `{U1 mark}`.
-- **`ID_FLASH` (0x23):** SET `{KEY}`. v0 saves the rate, the boot address and the report period; v1 reloads the saved
-  boot address and report period (the rate in use is not changed: the saved rate applies at the next boot); v2 erases
-  them.
+- **`ID_FLASH` (0x23):** SET `{KEY}`. v0 confirms and saves the current rates of both ports and the report period; v1
+  reloads the saved report period (saved rates apply at the next boot); v2 erases the saved rates (X1 921600, X2 115200
+  at the next boot) and the report period.
 - **`ID_BOOT` (0x24):** SET v0 `{KEY}` reboots the module after a 5 s update window.
-  - A reboot brings back the **saved** rate and address (`ID_FLASH` v0), as on sonars.
-  - Only an update, and a role change with reboot, carry the current rate and address over one boot.
-- **Firmware update is accepted only over a wired line** (UART or native USB, 0.11). `ID_UPDATE` and `ID_BOOT` v1 from the network get
+  - A reboot brings back the **saved** rates.
+  - Only an update, and a role change with reboot, carry the current rates over one boot. The address is always the
+    saved one (0.12; 0.11 also carried the address over).
+- **Firmware update is accepted only over a wired line**, X1 or X2 (UART or native USB, 0.11). `ID_UPDATE` and `ID_BOOT` v1 from the network get
   ERR_RUNTIME. SBP has no authentication and the image is not signed ([UPDATE.md](UPDATE.md), [SECURITY.md](../SECURITY.md)).
 
 2, 3 and 4 Mbaud were verified with `ID_UART` v0 on the UART of an RK3588 head unit. KoggerApp's "Set baudrate" list
@@ -165,15 +183,14 @@ same 4 fields, then `U1 power in effect (0.25 dBm), U1 mode negotiated with the 
 - Text command (SLIP mode, bench): `RADIO` shows; `RADIO power=15 mode=bgn bw=20 ps=none` sets.
 - **In the AP role** (0.10) protocols and bandwidth apply to the access point, and changing them restarts it 0.2 s after
   the answer (0.11). Power save is not applied: an access point must listen to its clients. The negotiated mode is
-  0xFF. "LR only" (0x08) is refused in the AP role (ERR_PAYLOAD, 0.11; the text `RADIO` command does not check it, known issue): no phone or laptop could join such an AP, and
-  the setting could then only be undone over a wire.
+  0xFF. "LR only" is allowed in the AP role (0.12; 0.11 refused it): only Espressif stations with LR, such as another module set to LR or b/g/n + LR, can join such an AP; no phone or laptop can, and a wrong setting is undone over a wire or from such a station.
 
 ![TX power steps](img/tx_power_steps.svg)
 
 **Changes to `ID_WIFI` in 0.11:**
 - v1 is one byte longer (reset reason);
 - v7 comes by itself after a connection, bytes 6–7 are named correctly, power goes up to 80;
-- LR‑only is refused in the AP role;
+- LR‑only is refused in the AP role (allowed again in 0.12);
 - v2 answers whoever asked and never returns a partial list;
 - v5 with mode "off" no longer touches the module's address, and enabling with address 0 is refused.
 
@@ -191,18 +208,16 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
 | v0 | role: `{U1 at next boot, U1 now}`, 0 station, 1 AP | `{U1 role, U1 flags}`: bit0 reboot right after the answer, bit1 forget lines and own address (the new role starts from its defaults) |
 | v1 | access point: `{U1 channel 1–11, U1 hidden 0/1, U1 max clients 1–10, U1 security 0 open/1 WPA2/2 WPA2+WPA3, U1 len, SSID, U1 0}` | the same, ending with `U1 len, password` (8–63; empty for open). An empty password with security on keeps the old password |
 | v2 | address: `{ip[4], mask[4], U1 DHCP, pool start[4], pool end[4], U2 lease min, U1 offer: bit0 gateway, bit1 DNS}` (20 bytes) | the same 20 bytes |
-| v3 | line (18 bytes): `{U1 line, U1 mode 0 off/1 UDP/2 TCP, U1 dest 0 fixed/1 senders/2 broadcast, ip[4], U2 rport, U2 lport, U4 baud, S1 TX, S1 RX, U1 uart}`. No payload: both lines; `{U1 line}`: one | the first 17 bytes of the record. For line 0 baud and pins are ignored (rate: `ID_UART`; pins: build) |
+| v3 | line (18 bytes): `{U1 line, U1 mode 0 off/1 UDP/2 TCP, U1 dest 0 fixed/1 senders/2 broadcast, ip[4], U2 rport, U2 lport, U4 baud, S1 TX, S1 RX, U1 uart}`. No payload: both lines; `{U1 line}`: one | the first 17 bytes of the record. `baud` (0.12) changes the other line's rate, or either line's when asked from the network, and is saved at once; 0 or the running rate keeps it. For the line of the port the request came through `baud` is ignored: that port's rate is changed with `ID_UART` v0. Pins apply to line 1 only (line 0: the build) |
 | v4 | line statistics (57 bytes); no payload: both, `{U1 line}`: one | — (ERR_TYPE) |
 | v5 | AP clients: `{U1 index, U1 total, MAC[6], ip[4], S1 RSSI}` each; none: `{0, 0}` | — (ERR_TYPE) |
-| v6 | own address while bridging `{U1}` | `{U1 address 1–255}` (0 → ERR_PAYLOAD, 0.11); acknowledged from the old address |
+| v6 | own address `{U1}` | `{U1 address 1–254}` (0 and 255 → ERR_PAYLOAD); acknowledged from the old address |
+| v7 | port information (0.12, §4.1): `{}` both ports, `{U1 port}`, `{U1 port, U1 page}` | — (ERR_TYPE) |
 
-- **v0.** The role takes effect at boot. With the reboot flag, the module carries the current rate and address over one
-  boot, as after an update, and it keeps that address for this boot even while a line bridges. It moves to its
-  bridging address (the saved one, otherwise the role default: 87 station, 88 access point) after the next reboot or after any line setting (`ID_WIFI_NET` v3
-  or v6, `ID_WIFI` v5).
-  - **Known issue (0.11):** from the station default (address 0), the AP comes up with both lines relaying while the
-    module still answers address 0, so it takes SETTING/GETTING frames meant for a device at address 0. Send an
-    `ID_WIFI_NET` v6 (or reboot once more) right after the role change.
+- **v0.** The role takes effect at boot. With the reboot flag, the module carries the current rates over one boot, as
+  after an update. The address after the reboot is the saved one, otherwise the new role's default (87 station, 88
+  access point); a host finds it again with discovery (0.12; the 0.11 carry‑over of the address, and its known issue
+  with address 0, are gone).
 - **v1.** The network name can be changed at will.
   - To change only the name, take the fields from a GETTING v1, put in the new name and send it with an empty password.
     With security on, the password stays. Example for the name `Boat-1`, WPA2, channel 6, up to 4 clients:
@@ -218,9 +233,10 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
     defaults. If even those are refused, the radio does not start at all. There is never an open AP.
 - **v2.** Validation rules: [NETWORK.md](NETWORK.md) §3. In the AP role the change applies 0.2 s after the answer, and
   all clients are disconnected so they take a new lease.
-- **v3.** `uart`: 0 UART off, 1 running on these pins, 2 the saved pins take effect after a reboot. For line 0 the answer
-  carries the current rate and the build's pins (−1/−1 in the USB variant). An error in any field → ERR_PAYLOAD and
-  nothing changes.
+- **v3.** `uart`: 0 UART off, 1 running on these pins, 2 the saved pins take effect after a reboot. Both lines report
+  their running rate (the saved one while the UART does not run); line 0 carries the build's pins (−1/−1 in the USB
+  variant). An error in any field → ERR_PAYLOAD and nothing changes. Writing back a record read earlier never moves the
+  rate of the port the host sits on, even when the rate has changed since.
 - **v4.** The payload starts with `{U1 line, U1 state 0 off/1 no Wi‑Fi/2 no peer/3 ready, ip[4], U2 peer port,
   U1 senders}`, then twelve U4 counters:
   - up: frames, bytes, packets, drops;
@@ -228,9 +244,9 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
   - frames addressed to the module, TCP connections, UART receive overflows, UART transmit drops.
 
   The peer is the fixed/TCP peer, the broadcast address or the last sender.
-- **v6** is the same field as `addr` in `ID_WIFI` v5. Address 0 is refused: devices sit there by default, and the module
-  would take their frames.
-- An unknown version → ERR_VERSION (v7).
+- **v6** is the same field as `addr` in `ID_WIFI` v5. 0 and 255 are refused: 0 is where devices sit by default, 255 is
+  the broadcast route.
+- All eight versions of `ID_WIFI_NET` are in use (v7 since 0.12).
 
 **Changes to `ID_WIFI_NET` in 0.11:**
 - AP channel 1–11; 0.10 records with channel 12–13 are clamped to 11;
@@ -241,11 +257,74 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
   bridging address); see the known issue under v0;
 - a disabled DHCP server stays disabled after an AP restart.
 
-## 5. One port, two protocols
+**Changes in 0.12:**
+- the two ports are equal: the module answers on X1 and X2 in either role;
+- fixed own address (87 station / 88 access point, or v6), independent of bridging; 255 refused like 0; no address
+  carry‑over at a role reboot;
+- discovery: GETTING `ID_VERSION` to 0 or 255 is answered from the own address and relayed;
+- unsolicited frames go to every channel that asked within 60 s;
+- v3 sets the rate of the other line (or of either line from the network), saved at once; the asking port's rate is
+  changed with `ID_UART` v0, provisionally (§2);
+- unsolicited frames reach every subscriber even while a request from another channel is handled;
+- the reboot into a new image still leaves the address for a 0.11 image (unused by 0.12), so a rollback to 0.11 over
+  SBP comes back at the address the host talks to;
+- v7: port information (§4.1);
+- `ID_WIFI` v7: "LR only" is allowed in the AP role, for module‑to‑module links.
 
-The same port also understands SLIP frames for the IP bridge ([PROTOCOL.md](PROTOCOL.md), daemon `host/espwifi_bridge.py`).
-- The first valid frame after power‑up locks the protocol until the next reboot: an SBP frame with the module's
-  address selects SBP, a SLIP frame selects SLIP.
+### 4.1 Port information (v7, 0.12)
+
+GETTING v7 without payload → page 0 of both ports; `{U1 port}` → page 0 of that port; `{U1 port, U1 page}` → that
+page. Port 0 = X1, 1 = X2; pages 0–2; anything else → ERR_PAYLOAD. SETTING → ERR_TYPE. Firmware 0.11 answers GETTING v7
+with ERR_VERSION. Every answer is a CONTENT v7 `{U1 port, U1 page, …}`; ages are in 0.1 s, 0xFFFF = never or
+≥ 6553.5 s. Nothing here changes any traffic: the module only watches what passes (`firmware/main/portinfo.c`).
+
+**Page 0, summary** (116 bytes):
+
+| Offset | Type | Field |
+|---|---|---|
+| 0 | U1 | port |
+| 1 | U1 | page = 0 |
+| 2 | U1 | flags: bit0 UART running; bit1 bridging (the line is on); bit2 **the request for this page came through this port**; bit3 the port gets the module's unsolicited frames; bit4 locked to SLIP (IP bridge, X1 only); bit5 rate provisional (waiting for confirmation); bit6 USB transport (X1 in the USB variant) |
+| 3 | U4 | current rate (0 = UART off) |
+| 7 | U4 | saved rate |
+| 11 | U1 | connected, judged over the last 10 s: 0 nothing; 1 unreadable bytes (another rate or an unknown protocol); 2 SBP host; 3 SBP device(s); 4 SBP host and devices; 5 MAVLink; 6 u‑blox; 7 IP bridge host (SLIP); 8 other framed traffic |
+| 12 | U4 | bytes received |
+| 16 | U4 | bytes sent |
+| 20 | U2 | age of the last byte received |
+| 22 | U2 | age of the last byte sent |
+| 24 | 6 × 10 | per protocol, in the order KP1, KP2, UBX, MAVLink 1, MAVLink 2, raw: `{U4 units from the port, U4 units to the port, U2 age of the last one from the port}` |
+| 84 | U4 | SBP requests (SETTING/GETTING) from the port |
+| 88 | U4 | SBP CONTENT from the port |
+| 92 | U4 | SBP requests to the port |
+| 96 | U4 | SBP CONTENT to the port |
+| 100 | U4 | requests to the module that came through the port |
+| 104 | U4 | the module's own frames sent to the port |
+| 108 | U4 | receive overflows |
+| 112 | U4 | transmit drops |
+
+- A host sends requests, a device answers with CONTENT: that is how "connected" tells them apart. Units are whole
+  frames as the relay cuts them ([RELAY.md](RELAY.md)); raw units are runs of bytes that are not such frames.
+- Bit2 tells a host which port it sits on; the rest tells it what is on the other one.
+
+**Page 1, devices heard from the port** (3 + 12·n bytes, n ≤ 8, the most recent first): `{U1 port, U1 page = 1,
+U1 n}`, then n entries `{U1 kind: 1 SBP device, 2 MAVLink system; U1 SBP address or MAVLink sysid; U1 board (SBP,
+0 unknown) or compid; U1 firmware major (SBP) or MAV_TYPE; U1 firmware minor (SBP) or MAV_AUTOPILOT; U1 flags: bit0
+SBP version known, bit1 MAVLink heartbeat seen; U2 age; U4 serial (SBP, from ID_VERSION v0; 0 unknown) or frames seen
+(MAVLink)}`. Board and firmware come from `ID_VERSION` answers that pass through the port (v2: board and firmware,
+v0: board and serial); type and autopilot from a HEARTBEAT. When the table is full the stalest entry makes room.
+
+**Page 2, network side of the port's line** (5 + 8·n bytes, n ≤ 4): `{U1 port, U1 page = 2, U1 line mode 0 off/1 UDP/
+2 TCP, U1 line state as v4, U1 n}`, then n entries `{ip[4], U2 port, U2 age of the last data from it}`: the fixed, TCP
+or broadcast peer, or the senders a `senders` line answers.
+
+Bench check of all of this on hardware: `tools/bench_ports.py`.
+
+## 5. X1: SBP and the IP bridge
+
+X1 also understands SLIP frames for the IP bridge ([PROTOCOL.md](PROTOCOL.md), daemon `host/espwifi_bridge.py`); X2
+carries SBP only.
+- The first valid frame after power‑up locks X1's protocol until the next reboot: an SBP frame for the module (its own
+  address or discovery) selects SBP, a SLIP frame selects SLIP.
 - In SBP mode the module is silent on SLIP, and in SLIP mode on SBP.
 - Until the protocol is locked, in the station role the module sends SLIP text notifications (`* HELLO` at boot,
   `* STATE` on changes). KoggerApp's parser skips those bytes as noise.

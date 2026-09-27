@@ -123,7 +123,7 @@ def find_compiler():
 def build(tmp):
     kind, tool = find_compiler()
     srcs = [os.path.join(ROOT, 'tests', 'c_harness.c')] + [os.path.join(FW, f) for f in
-                                                          ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c')]
+                                                          ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c', 'portinfo.c')]
     exe = os.path.join(tmp, 'c_harness.exe' if os.name == 'nt' else 'c_harness')
     if kind == 'gcc':
         cmd = [tool, '-std=c99', '-O2', '-Wall', '-Wextra', '-Werror', '-I', FW, '-o', exe] + srcs
@@ -445,12 +445,82 @@ def relay_tests(run, tmp):
             check('%s: frames > 512 B cut into 512-byte packets that add up to the frame' % tag, ok)
 
 
+def portinfo_tests(exe):
+    """ID_WIFI_NET v7 pages built by firmware/main/portinfo.c, read with host/sbpframe.parse_port."""
+    def run(script):
+        out = subprocess.run([exe, 'portinfo'], input=NL.join(script) + NL, stdout=subprocess.PIPE, text=True).stdout
+        return [SB.parse_port(bytes.fromhex(l.split()[1])) for l in out.split(NL) if l.startswith('P')]
+
+    host_req = KF.kp1(0, SB.mode(SB.GETTING, 2), SB.ID_VERSION, b'')          # discovery from a host
+    host_set = KF.kp1(87, SB.mode(SB.SETTING, 0), SB.ID_UART, bytes(9))
+    v2 = bytes([0, 0, 12, 0, 0, 0, 0, 10, 1])                                  # board 12, firmware 1.10
+    v0 = bytes([0, 12]) + bytes(12) + bytes([4, 3, 2, 1]) + bytes(16)          # serial 0x01020304
+    dev_v2 = KF.kp1(0, SB.mode(SB.CONTENT, 2), SB.ID_VERSION, v2)
+    dev_v0 = KF.kp1(0, SB.mode(SB.CONTENT, 0), SB.ID_VERSION, v0)
+    ack = KF.kp1(0, SB.mode(SB.CONTENT, 2, resp=True), SB.ID_VERSION, bytes([1, 2, 3]))  # an ack is no version
+    hb = KF.mav2(0, bytes([0, 0, 0, 0, 10, 3, 81, 4]), sysid=1, compid=1)       # HEARTBEAT, version byte trimmed
+    ubx = KF.ubx(0x01, 0x07, bytes(92))
+    noise = bytes([0x31, 0x32, 0x41, 0x0d, 0x0a] * 6)
+    net_req = KF.kp1(0, SB.mode(SB.GETTING, 0), 0x1C, b'')
+    script = ['clock 10',
+              'up 0 ' + (host_req + host_set).hex(),
+              'up 1 ' + (dev_v2 + dev_v0 + ack).hex(),
+              'clock 20',
+              'up 1 ' + (hb + ubx + noise).hex(),
+              'down 1 ' + (net_req + dev_v2).hex(),
+              'rx 1 1000', 'tx 1 500', 'mrx 0', 'mtx 0', 'mtx 0',
+              'clock 50',
+              'p0 0 13 0', 'p0 1 3 0', 'p1 1', 'p0 0 0 1',
+              'clock 200', 'p0 1 3 0',
+              'up 0 ' + noise.hex(), 'clock 205', 'p0 0 1 0',
+              'p1 0']
+    p = run(script)
+    ok = len(p) == 7
+    check('portinfo: 7 pages from the script', ok, str(len(p)))
+    if not ok:
+        return
+    x1, x2, dev, x1slip, x2late, x1noise, x1dev = p
+    check('portinfo p0 X1: host (2 requests), flags/rates/overflows as given, module 1 in / 2 out',
+          x1['connected'] == 'sbp_host' and x1['sbp_req_up'] == 2 and x1['sbp_content_up'] == 0 and
+          x1['flags']['uart'] and x1['flags']['asked_here'] and x1['flags']['reports'] and not x1['flags']['slip'] and
+          x1['baud'] == 921600 and x1['saved'] == 115200 and x1['rx_overflows'] == 7 and x1['tx_drops'] == 9 and
+          x1['module_rx'] == 1 and x1['module_tx'] == 2 and x1['protos']['kp1']['up'] == 2 and
+          x1['protos']['kp1']['age'] == 4.0 and x1['rx_age'] is None, str(x1))
+    pr = x2['protos']
+    check('portinfo p0 X2: devices win over MAVLink/u-blox; units by protocol both ways; bytes and ages',
+          x2['connected'] == 'sbp_devices' and pr['kp1']['up'] == 3 and pr['kp1']['down'] == 2 and
+          pr['mav2']['up'] == 1 and pr['ubx']['up'] == 1 and pr['raw']['up'] >= 1 and pr['kp1']['age'] == 4.0 and
+          pr['mav2']['age'] == 3.0 and pr['kp2']['age'] is None and x2['sbp_content_up'] == 3 and
+          x2['sbp_req_down'] == 1 and x2['sbp_content_down'] == 1 and x2['rx_bytes'] == 1000 and
+          x2['tx_bytes'] == 500 and x2['rx_age'] == 3.0, str(x2))
+    d = dev['devices']
+    check('portinfo p1 X2: MAVLink system (heartbeat: type 10, autopilot 3) first, then SBP board 12 fw 1.10 '
+          'serial 0x01020304; the ack is not a version',
+          len(d) == 2 and d[0]['kind'] == 'mavlink' and d[0]['sysid'] == 1 and d[0]['compid'] == 1 and
+          d[0]['mav_type'] == 10 and d[0]['autopilot'] == 3 and d[0]['heartbeat'] and d[0]['frames'] == 1 and
+          d[1]['kind'] == 'sbp' and d[1]['addr'] == 0 and d[1]['board'] == 12 and d[1]['fw'] == (1, 10) and
+          d[1]['version_known'] and d[1]['serial'] == 0x01020304 and d[1]['age'] == 4.0, str(d))
+    check('portinfo p0 X1 on an IP bridge: slip only while bytes arrived within 10 s (none here: host stays)',
+          x1slip['connected'] == 'sbp_host' and x1slip['flags'] == {n: False for n in SB.PORT_FLAGS}, str(x1slip))
+    check('portinfo p0 X2 after 18 s of silence: nothing connected, ages grow',
+          x2late['connected'] == 'nothing' and x2late['protos']['kp1']['age'] == 19.0 and x2late['rx_age'] == 18.0,
+          str(x2late))
+    check('portinfo p0 X1 with only unframed bytes lately: unreadable (another rate or protocol)',
+          x1noise['connected'] == 'unreadable' and x1noise['protos']['raw']['up'] >= 1, str(x1noise))
+    check('portinfo p1 X1: a host only, no devices', x1dev['devices'] == [], str(x1dev))
+    check('py: discovery = GETTING ID_VERSION to 0/255 only',
+          SB.is_discovery(0, SB.mode(SB.GETTING, 2), SB.ID_VERSION) and SB.is_discovery(255, SB.mode(SB.GETTING, 0), SB.ID_VERSION)
+          and not SB.is_discovery(0, SB.mode(SB.SETTING, 0), SB.ID_VERSION) and not SB.is_discovery(0, SB.mode(SB.GETTING, 0), SB.ID_UART)
+          and not SB.is_discovery(87, SB.mode(SB.GETTING, 0), SB.ID_VERSION))
+
+
 def main():
     py_tests()
     with tempfile.TemporaryDirectory() as tmp:
         exe = build(tmp)
         if exe:
             c_tests(exe, tmp)
+            portinfo_tests(exe)
     failed = [n for n, ok in results if not ok]
     print(NL + '%d checks, %d failed' % (len(results), len(failed)))
     sys.exit(1 if failed else 0)

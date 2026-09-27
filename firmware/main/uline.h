@@ -24,6 +24,10 @@ bool uline_tx_relay(const uint8_t *d, size_t n);
 
 bool uline_set_baud(uint32_t baud);
 
+/** Current (or last requested) rate; when the last change took effect (esp_timer, 0 while queued). */
+uint32_t uline_baud(void);
+int64_t uline_baud_switched_us(void);
+
 typedef struct {
     uint32_t rx_bytes, tx_bytes, rx_overflows, tx_drops;
 } uline_stats_t;

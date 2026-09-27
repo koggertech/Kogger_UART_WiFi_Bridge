@@ -242,7 +242,7 @@ uint8_t ota_run_request(bool *reboot)
 
 void ota_reboot_into_new(void)
 {
-    sbpdev_save_resume();         /* same baud and address after the reboot: no false rollback */
+    sbpdev_save_resume();         /* same rate (and, for a 0.11 image, address) after the reboot: no false rollback */
     vTaskDelay(pdMS_TO_TICKS(300));
     esp_restart();
 }

@@ -17,6 +17,7 @@
 #include "kframe.h"
 #include "kpack.h"
 #include "link.h"
+#include "portinfo.h"
 #include "sbp.h"
 #include "sbpdev.h"
 #include "uline.h"
@@ -130,12 +131,12 @@ static uint32_t bcast_ip(void)
 
 /* ---- configuration -------------------------------------------------------------------------- */
 
-/* The module's own address while any line bridges (a bridged device keeps its address, usually 0),
- * the boot address otherwise; the host port carries only SBP while line 0 bridges. */
+/* The module's own address is fixed (ID_WIFI_NET v6, else the role's default), whether a line bridges or
+ * not, so one port's setting never moves the address a host on the other port talks to. X1 carries only
+ * SBP while line 0 bridges. */
 static void apply_route(void)
 {
-    bool any = line_on(0) || line_on(1);
-    sbpdev_set_route(any ? netcfg_addr() : sbpdev_default_route());
+    sbpdev_set_route(netcfg_addr());
     if (line_on(0))
         link_set_proto(LINK_PROTO_SBP);
 }
@@ -159,8 +160,7 @@ static void take_cfg(int line, const line_cfg_t *c)
     xSemaphoreTake(s_mux, portMAX_DELAY);
     L[line].cfg = *c;
     xSemaphoreGive(s_mux);
-    if (line == 1 && c->baud != old.baud)
-        uline_set_baud(c->baud); /* pins take effect after a reboot: a running UART is never re-pinned */
+    /* Rates belong to ports.c (switched after the acknowledgement); pins apply after a reboot. */
     if (net_differs(&old, c)) {
         L[line].reset = true;
         xEventGroupSetBits(s_ev, EV_RESET);
@@ -211,8 +211,8 @@ static void v5_to_line(const relay_cfg_t *c, line_cfg_t *l)
 
 bool relay_cfg_ok(const relay_cfg_t *c)
 {
-    if (c->mode > RELAY_TCP || (c->mode != RELAY_OFF && c->addr == 0))
-        return false; /* bridging on address 0 would swallow the frames of a device on its default address */
+    if (c->mode > RELAY_TCP || (c->mode != RELAY_OFF && (c->addr == 0 || c->addr == 255)))
+        return false; /* 0 is a device's default address, 255 the broadcast route */
     line_cfg_t l;
     v5_to_line(c, &l);
     return netcfg_line_ok(0, &l);
@@ -300,6 +300,12 @@ static bool for_module(const uint8_t *d, unsigned flags)
     return t == SBP_T_SETTING || t == SBP_T_GETTING;
 }
 
+/* GETTING ID_VERSION to route 0 or 255: answered by the module and relayed all the same. */
+static bool is_discovery(const uint8_t *d, unsigned flags)
+{
+    return (flags & KF_P_MASK) == KF_P_KP1 && sbp_is_discovery(d[2], d[3], d[4]);
+}
+
 static void to_module(rline_t *l, const uint8_t *d, const sbp_chan_t *ch)
 {
     sbp_frame_t f = { d[2], d[3], d[4], d[5], d + 6, d[6 + d[5]], d[7 + d[5]] };
@@ -311,10 +317,12 @@ static void up_unit(void *ctx, kf_kind_t kind, const uint8_t *d, size_t n, unsig
 {
     int line = (int)(intptr_t)ctx;
     rline_t *l = &L[line];
-    if (kind == KF_FRAME && for_module(d, flags)) {
+    portinfo_up(line, portinfo_proto(kind, flags), d, n);
+    if (kind == KF_FRAME && (for_module(d, flags) || is_discovery(d, flags))) {
         const sbp_chan_t ch = { .kind = line == 0 ? CH_LINK : CH_LINE1, .line = (uint8_t)line };
-        to_module(l, d, &ch); /* never relayed */
-        return;
+        to_module(l, d, &ch);
+        if (for_module(d, flags))
+            return; /* the module's own requests are never relayed; discovery goes on to the network */
     }
     if (!line_on(line))
         return; /* a line that does not bridge is only listened to for the module's own frames */
@@ -437,16 +445,19 @@ static void dn_unit(void *ctx, kf_kind_t kind, const uint8_t *d, size_t n, unsig
 {
     int line = (int)(intptr_t)ctx;
     rline_t *l = &L[line];
-    if (kind == KF_FRAME && for_module(d, flags)) { /* configured over the network: answer the sender */
+    if (kind == KF_FRAME && (for_module(d, flags) || is_discovery(d, flags))) {
+        /* configured over the network: answer the sender; discovery also reaches the UART's device */
         const sbp_chan_t ch = { .kind = CH_NET, .line = (uint8_t)line, .ip = l->rx_from.sin_addr.s_addr,
                                 .port = l->rx_from.sin_port };
         to_module(l, d, &ch);
-        return;
+        if (for_module(d, flags))
+            return;
     }
     if (!uart_tx(line, d, n)) {
         l->st.down_drops++; /* UART cannot keep up: drop the whole unit, never a piece of it */
         return;
     }
+    portinfo_down(line, portinfo_proto(kind, flags), d, n);
     if (kind == KF_FRAME)
         l->st.down_frames++;
 }
@@ -460,7 +471,8 @@ static void foreign_frame(void *ctx, const sbp_frame_t *f)
 {
     const foreign_t *fo = ctx;
     uint8_t t = sbp_type(f->mode);
-    if (f->route != sbpdev_route() || (t != SBP_T_SETTING && t != SBP_T_GETTING))
+    bool own = f->route == sbpdev_route() && (t == SBP_T_SETTING || t == SBP_T_GETTING);
+    if (!own && !sbp_is_discovery(f->route, f->mode, f->id))
         return;
     const sbp_chan_t ch = { .kind = CH_NET, .line = (uint8_t)fo->line, .ip = fo->from.sin_addr.s_addr,
                             .port = fo->from.sin_port };
@@ -752,12 +764,7 @@ void relay_start(void)
 {
     if (uline_running() && !alloc_line(1)) /* line 1 buffers only when its UART runs */
         ESP_LOGE(TAG, "no memory for line 1");
-    /* Before the link starts, so no frame is ever judged against a wrong address. A one-shot address
-     * kept across an update or role reboot wins; otherwise the bridging address or the boot one. */
-    if ((line_on(0) || line_on(1)) && !sbpdev_route_resumed())
-        sbpdev_set_route(netcfg_addr());
-    if (line_on(0))
-        link_set_proto(LINK_PROTO_SBP);
+    apply_route(); /* before the link starts, so no frame is ever judged against a wrong address */
     for (int i = 0; i < NLINES; i++)
         log_line(i);
     xTaskCreate(net_tx_task, "relay_tx", 3072, NULL, 10, NULL);
@@ -790,4 +797,45 @@ void relay_line_stats(int line, relay_stats_t *s)
 void relay_get_stats(relay_stats_t *s)
 {
     relay_line_stats(0, s);
+}
+
+static uint16_t age_ds(int64_t t, int64_t now)
+{
+    if (t <= 0)
+        return 0xFFFF;
+    int64_t a = (now - t) / 100000;
+    return a >= 0xFFFF ? 0xFFFF : (uint16_t)a;
+}
+
+int relay_line_peers(int line, uint8_t *mode, uint8_t *state, relay_peer_t *out, int max)
+{
+    if (line < 0 || line >= NLINES)
+        return 0;
+    rline_t *l = &L[line];
+    int64_t now = esp_timer_get_time();
+    uint32_t b = bcast_ip();
+    int n = 0;
+    xSemaphoreTake(s_mux, portMAX_DELAY);
+    *mode = l->cfg.mode;
+    *state = l->st.state;
+    if (l->cfg.mode != LINE_OFF && (l->cfg.mode == LINE_TCP || l->cfg.dest != DEST_SENDERS)) {
+        uint32_t ip = l->cfg.mode == LINE_TCP || l->cfg.dest == DEST_FIXED ? ip_net(l->cfg.ip) : b;
+        if (max > 0) {
+            memcpy(out[0].ip, &ip, 4);
+            out[0].port = l->cfg.rport;
+            out[0].age_ds = age_ds(l->last_rx, now);
+            n = 1;
+        }
+    } else if (l->cfg.mode == LINE_UDP) {
+        for (int p = 0; p < MAXPEERS && n < max; p++) {
+            if (!l->seen[p] || now - l->seen[p] >= PEER_TTL_US)
+                continue;
+            memcpy(out[n].ip, &l->peers[p].sin_addr.s_addr, 4);
+            out[n].port = ntohs(l->peers[p].sin_port);
+            out[n].age_ds = age_ds(l->seen[p], now);
+            n++;
+        }
+    }
+    xSemaphoreGive(s_mux);
+    return n;
 }

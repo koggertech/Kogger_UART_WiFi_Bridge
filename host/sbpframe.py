@@ -13,6 +13,7 @@ RESP = {1: 'OK', 2: 'ERR_CHECK', 3: 'ERR_PAYLOAD', 4: 'ERR_ID', 5: 'ERR_VERSION'
 
 ID_UART, ID_VERSION, ID_MARK, ID_FLASH, ID_BOOT, ID_WIFI = 0x18, 0x20, 0x21, 0x23, 0x24, 0x57
 ID_WIFI_NET = 0x58
+BOARD_WIFI = 87      # board number of the module in ID_VERSION
 BOARD_WIFI = 87
 
 
@@ -294,3 +295,78 @@ def parse_client(p):
     if len(p) < 13:
         raise ValueError('bad v5 length %d' % len(p))
     return dict(index=p[0], total=p[1], mac=':'.join('%02x' % x for x in p[2:8]), ip=_ip(p[8:12]), rssi=_i8(p[12]))
+
+
+# ---- 0.12: discovery and ID_WIFI_NET v7 port information (docs/SBP_WIFI.md) --------------------
+
+ROUTE_BCAST0, ROUTE_BCAST = 0, 255
+PORT_NAMES = ['X1', 'X2']
+PORT_PROTOS = ['kp1', 'kp2', 'ubx', 'mav1', 'mav2', 'raw']
+PORT_CONNECTED = ['nothing', 'unreadable', 'sbp_host', 'sbp_devices', 'sbp_host_devices', 'mavlink', 'ublox', 'slip',
+                  'other']
+PORT_FLAGS = ['uart', 'bridging', 'asked_here', 'reports', 'slip', 'provisional', 'usb']
+
+
+def is_discovery(route, mode_, id_):
+    """GETTING ID_VERSION to route 0 or 255: the module answers from its own address (and relays it)."""
+    return route in (ROUTE_BCAST0, ROUTE_BCAST) and (mode_ & 3) == GETTING and id_ == ID_VERSION
+
+
+def ports_payload(port=None, page=None):
+    """GETTING ID_WIFI_NET v7: none = page 0 of both ports, (port) = its page 0, (port, page)."""
+    if port is None:
+        return b''
+    return bytes([port]) if page is None else bytes([port, page])
+
+
+def _age(v):
+    return None if v == 0xFFFF else v / 10.0
+
+
+def parse_port(p):
+    """ID_WIFI_NET CONTENT v7: one page of one port."""
+    if len(p) < 2:
+        raise ValueError('bad v7 length %d' % len(p))
+    port, page = p[0], p[1]
+    if page == 0:
+        if len(p) < 116:
+            raise ValueError('bad v7 page 0 length %d' % len(p))
+        d = dict(port=port, page=0, flags={n: bool(p[2] >> i & 1) for i, n in enumerate(PORT_FLAGS)},
+                 baud=struct.unpack('<I', p[3:7])[0], saved=struct.unpack('<I', p[7:11])[0],
+                 connected=PORT_CONNECTED[p[11]] if p[11] < len(PORT_CONNECTED) else p[11])
+        d['rx_bytes'], d['tx_bytes'], ra, ta = struct.unpack('<IIHH', p[12:24])
+        d['rx_age'], d['tx_age'] = _age(ra), _age(ta)
+        d['protos'] = {}
+        for i, n in enumerate(PORT_PROTOS):
+            up, down, age = struct.unpack('<IIH', p[24 + 10 * i:34 + 10 * i])
+            d['protos'][n] = dict(up=up, down=down, age=_age(age))
+        names = ['sbp_req_up', 'sbp_content_up', 'sbp_req_down', 'sbp_content_down', 'module_rx', 'module_tx',
+                 'rx_overflows', 'tx_drops']
+        d.update(zip(names, struct.unpack('<8I', p[84:116])))
+        return d
+    if page == 1:
+        n = p[2] if len(p) > 2 else 0
+        if len(p) < 3 + 12 * n:
+            raise ValueError('bad v7 page 1 length %d' % len(p))
+        devs = []
+        for i in range(n):
+            e = p[3 + 12 * i:15 + 12 * i]
+            age, v = struct.unpack('<HI', e[6:12])
+            if e[0] == 1:
+                devs.append(dict(kind='sbp', addr=e[1], board=e[2], fw=(e[3], e[4]), version_known=bool(e[5] & 1),
+                                 age=_age(age), serial=v))
+            else:
+                devs.append(dict(kind='mavlink', sysid=e[1], compid=e[2], mav_type=e[3], autopilot=e[4],
+                                 heartbeat=bool(e[5] & 2), age=_age(age), frames=v))
+        return dict(port=port, page=1, devices=devs)
+    if page == 2:
+        n = p[4] if len(p) > 4 else 0
+        if len(p) < 5 + 8 * n:
+            raise ValueError('bad v7 page 2 length %d' % len(p))
+        peers = []
+        for i in range(n):
+            e = p[5 + 8 * i:13 + 8 * i]
+            pt, age = struct.unpack('<HH', e[4:8])
+            peers.append(dict(ip=_ip(e[0:4]), port=pt, age=_age(age)))
+        return dict(port=port, page=2, mode=p[2], state=LINE_STATES[p[3]] if p[3] < 4 else p[3], peers=peers)
+    raise ValueError('unknown v7 page %d' % page)

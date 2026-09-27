@@ -20,7 +20,18 @@
 /** Board id reported in ID_VERSION (KoggerApp BoardVersion), chosen from the free pool. */
 #define SBP_BOARD_WIFI  87
 
-/** Where a frame for the module came from; its answers, and from then on the unsolicited frames, go there. */
+/** Broadcast routes: a GETTING ID_VERSION to either is answered from the module's own address and still
+ *  relayed (discovery, docs/SBP_WIFI.md). 0 is also where devices sit by default. */
+#define SBP_ROUTE_BCAST0 0
+#define SBP_ROUTE_BCAST  255
+
+static inline bool sbp_is_discovery(uint8_t route, uint8_t mode, uint8_t id)
+{
+    return (route == SBP_ROUTE_BCAST0 || route == SBP_ROUTE_BCAST) && sbp_type(mode) == SBP_T_GETTING &&
+           id == SBP_ID_VERSION;
+}
+
+/** Where a frame for the module came from: X1 (line 0), X2 (line 1) or a network peer of a line. */
 typedef enum { CH_NONE = 0, CH_LINK = 1, CH_LINE1 = 2, CH_NET = 3 } sbp_chan_kind_t;
 
 typedef struct {
@@ -30,48 +41,58 @@ typedef struct {
     uint32_t ip;     /**< CH_NET: sender, network byte order */
 } sbp_chan_t;
 
-/** Load saved settings (address, report period, baud) and the one-shot resume record; sets the
- *  address. No link calls: before relay_start() and link_start(). */
+/** Load saved settings (report period, rates) and the one-shot resume record; sets the own address.
+ *  No link calls: after netcfg_load(), before relay_start() and link_start(). */
 void sbpdev_load(void);
 
-/** Apply the loaded baud rate (resume record first, else the saved one). After link_start(). */
+/** Apply the loaded rates (resume record first, else the saved one). After link_start(). */
 void sbpdev_start(void);
 
-/** This boot's address came from the one-shot resume record (update or role reboot). */
-bool sbpdev_route_resumed(void);
-
-/** Link RX handler: accepts SETTING/GETTING frames for our address, locks the link to SBP, queues them. */
-void sbpdev_on_frame(const sbp_frame_t *f);
-
-/** Same for a frame from line 1 or from the network (relay.c). Only CH_LINK locks the link to SBP. */
+/** RX side (relay.c, any line or the network): takes SETTING/GETTING for the own address and discovery,
+ *  locks X1 to SBP when it came from there, queues it for the manager. */
 void sbpdev_on_frame_ch(const sbp_frame_t *f, const sbp_chan_t *ch);
 
-/** Manager task, before handling a frame: answers go to its channel, and so do unsolicited frames
- *  (state reports, scan results, update progress) until a frame arrives from another channel. */
+/** Manager task, around one request: its answers go to its channel, and the channel is subscribed to
+ *  the unsolicited frames (state reports, update progress) for SUB_TTL of its last request. */
+void sbpdev_begin_request(const sbp_chan_t *ch);
+void sbpdev_end_request(void);
+
+/** Reply channel: set for the duration of a deferred answer (scan results) and read to remember it. */
 void sbpdev_set_channel(const sbp_chan_t *ch);
 void sbpdev_channel(sbp_chan_t *ch);
 
-/** Somebody can receive unsolicited frames (the host link is locked to SBP, or a line/peer asked). */
+/** Port (0 X1, 1 X2) a channel came through, -1 for the network or none. */
+int sbpdev_chan_port(const sbp_chan_t *ch);
+
+/** The port gets the module's unsolicited frames (a request came through it within SUB_TTL). */
+bool sbpdev_port_subscribed(int port);
+
+/** Somebody receives unsolicited frames: a subscribed port (X1 only while locked to SBP) or peer. */
 bool sbpdev_has_listener(void);
 
 /** Handle one queued frame (manager task). Returns 0 if handled, -1 if the id is not ours. */
 int sbpdev_handle(const sbp_frame_t *f);
 
-/** Send a frame from our address, carrying the mark bit. */
+/** Send a frame from our address, carrying the mark bit: to the request being handled, else to every
+ *  subscriber. */
 void sbpdev_send(uint8_t type, uint8_t ver, uint8_t id, const uint8_t *payload, uint8_t len);
+
+/** Send an unsolicited frame (a state change, a report) to every subscriber, also while a request from
+ *  one channel is being handled. */
+void sbpdev_notify(uint8_t type, uint8_t ver, uint8_t id, const uint8_t *payload, uint8_t len);
 
 /** Acknowledge a SETTING/GETTING frame: CONTENT+resp, same version, payload {code, ck1, ck2}. */
 void sbpdev_ack(const sbp_frame_t *req, uint8_t code);
 
-/** Current SBP address of the module, the one applied at boot, and a change of the current one. */
+/** Own SBP address of the module (ID_WIFI_NET v6, else 87 station / 88 access point) and its change. */
 uint8_t sbpdev_route(void);
-uint8_t sbpdev_default_route(void);
 void sbpdev_set_route(uint8_t r);
 
 /** Forget the mark bit, as a reset would (update window). */
 void sbpdev_clear_mark(void);
 
-/** Keep the current baud and address across the next reboot only (one-shot, used by updates). */
+/** Keep X1's current rate across the next reboot only (one-shot: updates, role reboot); X2's rate is saved
+ *  by then. Also leaves the address for a 0.11 image, which 0.12 itself ignores. */
 void sbpdev_save_resume(void);
 
 /** Period of the unsolicited ID_WIFI v1 report, ms (0 = off). */

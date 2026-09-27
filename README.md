@@ -5,9 +5,11 @@ Firmware for a small ESP32‑C3‑MINI‑1U board that puts serial devices on Wi
 - **Frame‑aware UART ↔ Wi‑Fi relay.** Two UART lines, each mapped to its own UDP port or TCP client.
   Traffic travels as whole protocol frames (Kogger SBP KP1/KP2, u‑blox UBX, MAVLink 1/2) packed into
   datagrams of at most 512 bytes. Anything else passes through as raw bytes, in order.
-- **Kogger SBP device** (board ID 87). A host that speaks Kogger SBP uses the same serial port to configure
-  Wi‑Fi, the relay and the network, to read state and statistics, and to update the firmware. The same works over
-  the second UART, and everything except firmware updates works over the network. The update exchange is
+- **Kogger SBP device** (board ID 87) **on either port.** A host that speaks Kogger SBP uses X1 or X2, in either
+  role, to configure Wi‑Fi, the relay and the network, to read state and statistics, and to update the firmware;
+  everything except firmware updates also works over the network. The module answers discovery (`ID_VERSION` to
+  address 0), so KoggerApp finds it without knowing its address, and it reports what it sees on each port: the rates,
+  whether a host or devices sit there, the devices heard, the traffic by protocol. The update exchange is
   the one KoggerApp uses for Kogger devices; its file dialog needs `*.ufww` added ([docs/UPDATE.md](docs/UPDATE.md)).
   The Wi‑Fi settings need a host that implements the `ID_WIFI` / `ID_WIFI_NET` contract
   ([docs/SBP_WIFI.md](docs/SBP_WIFI.md)); `host/sbpframe.py` has Python helpers for the frame and for
@@ -42,11 +44,11 @@ UART to phones and laptops on its own network.
 | Board | 20 × 30 mm, 4 layers; two JST GH 4‑pin connectors; supply 4.5–24 V on X1 (3.3 V / 1 A step‑down module) |
 | Wi‑Fi | 802.11 b/g/n, 2.4 GHz, 20/40 MHz; Espressif LR mode optional; TX power 2–20 dBm in 11 steps |
 | Roles | station (default) or access point (open, WPA2, WPA2/WPA3; channels 1–11; up to 10 clients) |
-| Serial lines | X1 = UART0 (host port), X2 = UART1; 9600–4 000 000 baud, 8N1; defaults 921600 and 115200 |
+| Serial lines | X1 = UART0, X2 = UART1, equal for control and relay; 9600–4 000 000 baud, 8N1, set for each port; defaults 921600 and 115200 |
 | Relay | per line: off, UDP (fixed peer, last ≤ 4 senders, or broadcast) or TCP client; frames up to 4096 B |
 | Control | Kogger SBP: `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 and the common device IDs, from any line or the network |
 | Update | over SBP on a wired line; A/B slots of 1.875 MiB; SHA‑256 check; confirmation after 60 s, rollback at 180 s |
-| Image size | 0.93 MB, 47 % of a slot (0.11.0, UART build) |
+| Image size | 0.94 MB, 48 % of a slot (0.12.0, UART build) |
 | Serial throughput | baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud |
 
 The serial line, not Wi‑Fi, is the bottleneck at these rates. Measured figures, test conditions and charts
@@ -95,15 +97,18 @@ Flashing, the native‑USB variant and the bench checks are described in
 
 ## Status
 
-- **Verified on hardware (0.1–0.11):**
+- **Verified on hardware (0.1–0.12):**
   - SBP device checks;
   - baud rates 9600 to 2 Mbaud on a bench adapter, 2/3/4 Mbaud on a head unit's UART;
   - IP bridge through NAT;
   - station auto‑connect;
   - firmware update, recovery from a lost chunk, a corrupted image refused;
   - relay to a boat network over UDP;
-  - 0.11.0 installed on a head unit's module over SBP at 3 Mbaud (7/7 checks), all settings kept.
-- **Not yet verified on hardware:** the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; the access‑point role; UART line 1; writing `ID_WIFI_NET` settings; the native USB variant; the IP bridge daemon on a Linux host.
+  - 0.11.0 installed on a head unit's module over SBP at 3 Mbaud (7/7 checks), all settings kept;
+  - 0.12.0 on a bench module: the port rules (29/29 checks in both roles), the SBP device checks (38/38);
+  - 0.12.0 on the head unit's module (7/7); a sonar on the access point's X2 seen on the head unit over an LR‑only
+    module‑to‑module link.
+- **Not yet verified on hardware:** the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
 
 The status of each release is in [CHANGELOG.md](CHANGELOG.md).
 

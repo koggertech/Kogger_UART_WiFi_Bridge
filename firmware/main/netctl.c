@@ -10,6 +10,8 @@
 
 #include "link.h"
 #include "netcfg.h"
+#include "portinfo.h"
+#include "ports.h"
 #include "relay.h"
 #include "sbpdev.h"
 #include "uline.h"
@@ -17,7 +19,7 @@
 
 static const char *TAG = "netctl";
 
-enum { V_ROLE = 0, V_AP, V_IP, V_LINE, V_STATS, V_CLIENTS, V_ADDR };
+enum { V_ROLE = 0, V_AP, V_IP, V_LINE, V_STATS, V_CLIENTS, V_ADDR, V_PORTS };
 
 #define ROLE_F_REBOOT 1u   /* reboot right after the answer */
 #define ROLE_F_FORGET 2u   /* forget saved lines and own address: the new role starts from its defaults */
@@ -173,12 +175,15 @@ static void set_ip(const sbp_frame_t *f)
 
 /* ---- v3 lines --------------------------------------------------------------------------------------- */
 
-/* Line 0 is the host port: its rate belongs to ID_UART and its pins to the build. */
+/* The rate shown is the running one (ports.c; the saved one while a UART does not run). Line 0's pins
+ * belong to the build. */
 static void line_view(int line, line_cfg_t *c)
 {
     netcfg_line(line, c);
+    uint32_t b = ports_baud(line);
+    if (b)
+        c->baud = b;
     if (line == 0) {
-        c->baud = link_baud();
 #if CONFIG_WB_LINK_UART
         c->tx_pin = CONFIG_WB_LINK_UART_TX;
         c->rx_pin = CONFIG_WB_LINK_UART_RX;
@@ -242,24 +247,32 @@ static void set_line(const sbp_frame_t *f)
     }
     int line = p[0];
     line_cfg_t c;
-    netcfg_line(line, &c);
+    netcfg_line(line, &c); /* keeps the saved rate: a new one goes through ports.c below */
     c.mode = p[1];
     c.dest = p[2];
     memcpy(c.ip, p + 3, 4);
     c.rport = sbp_get_u16(p + 7);
     c.lport = sbp_get_u16(p + 9);
-    if (line == 1) { /* line 0: rate via ID_UART, pins fixed by the build */
-        c.baud = sbp_get_u32(p + 11);
+    uint32_t baud = sbp_get_u32(p + 11);
+    if (line == 1) { /* line 0's pins are fixed by the build */
         c.tx_pin = (int8_t)p[15];
         c.rx_pin = (int8_t)p[16];
     }
-    if (!netcfg_line_ok(line, &c)) {
+    sbp_chan_t ch;
+    sbpdev_channel(&ch);
+    /* 0 or the running rate keeps it. The line of the asking port keeps it too: that port's rate is
+     * changed with ID_UART v0, and a host writing back a record it read earlier would send a stale rate. */
+    bool rate = baud != 0 && baud != ports_baud(line) && sbpdev_chan_port(&ch) != line;
+    if ((rate && !ports_baud_ok(baud)) || !netcfg_line_ok(line, &c)) {
         sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
         return;
     }
     /* Answered after the change: the TX task sends it at once, before the network task (lower
-     * priority) closes the socket of a changed line. */
-    sbpdev_ack(f, relay_line_set(line, &c) ? SBP_RESP_OK : SBP_RESP_ERR_RUNTIME);
+     * priority) closes the socket of a changed line. The other port's new rate is saved at once. */
+    bool ok = relay_line_set(line, &c);
+    sbpdev_ack(f, ok ? SBP_RESP_OK : SBP_RESP_ERR_RUNTIME);
+    if (ok && rate && !ports_set_baud(line, baud, false))
+        ESP_LOGW(TAG, "line %d: rate %lu not applied", line, (unsigned long)baud);
     send_line(line);
 }
 
@@ -316,12 +329,89 @@ static void send_clients(void)
     }
 }
 
+/* ---- v7 port information ---------------------------------------------------------------------------- */
+
+static void send_port(int port, int page)
+{
+    uint8_t q[PI_PAGE1_MAX > PI_PAGE0_LEN ? PI_PAGE1_MAX : PI_PAGE0_LEN];
+    size_t n;
+    if (page == 0) {
+        sbp_chan_t ch;
+        sbpdev_channel(&ch);
+        uint8_t fl = 0;
+        if (port == 0 || uline_running())
+            fl |= PI_F_UART;
+        if (relay_line_active(port))
+            fl |= PI_F_BRIDGE;
+        if (sbpdev_chan_port(&ch) == port)
+            fl |= PI_F_ASKED;
+        if (sbpdev_port_subscribed(port))
+            fl |= PI_F_REPORTS;
+        bool slip = port == 0 && link_proto() == LINK_PROTO_SLIP;
+        if (slip)
+            fl |= PI_F_SLIP;
+        if (ports_provisional(port))
+            fl |= PI_F_PROVISION;
+#if CONFIG_WB_LINK_USB_SERIAL_JTAG
+        if (port == 0)
+            fl |= PI_F_USB;
+#endif
+        uint32_t ovf, drops;
+        if (port == 0) {
+            link_stats_t ls;
+            link_get_stats(&ls);
+            ovf = ls.rx_overflows;
+            drops = ls.tx_dropped;
+        } else {
+            uline_stats_t us;
+            uline_get_stats(&us);
+            ovf = us.rx_overflows;
+            drops = us.tx_drops;
+        }
+        n = portinfo_page0(port, fl, ports_baud(port), ports_saved_baud(port), ovf, drops, slip, q);
+    } else if (page == 1) {
+        n = portinfo_page1(port, q);
+    } else {
+        relay_peer_t pe[4];
+        uint8_t mode, state;
+        int k = relay_line_peers(port, &mode, &state, pe, 4);
+        q[0] = (uint8_t)port;
+        q[1] = 2;
+        q[2] = mode;
+        q[3] = state;
+        q[4] = (uint8_t)k;
+        for (int i = 0; i < k; i++) {
+            memcpy(q + 5 + 8 * i, pe[i].ip, 4);
+            sbp_put_u16(q + 9 + 8 * i, pe[i].port);
+            sbp_put_u16(q + 11 + 8 * i, pe[i].age_ds);
+        }
+        n = 5 + 8u * (size_t)k;
+    }
+    send(V_PORTS, q, n);
+}
+
+/* GETTING v7: no payload = page 0 of both ports, {port} = its page 0, {port, page} = that page. */
+static void get_ports(const sbp_frame_t *f)
+{
+    const uint8_t *p = f->payload;
+    if (f->len > 2 || (f->len >= 1 && p[0] >= NLINES) || (f->len == 2 && p[1] > 2)) {
+        sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
+        return;
+    }
+    if (f->len == 0) {
+        for (int i = 0; i < NLINES; i++)
+            send_port(i, 0);
+        return;
+    }
+    send_port(p[0], f->len == 2 ? p[1] : 0);
+}
+
 /* ---- dispatcher ------------------------------------------------------------------------------------- */
 
 void netctl_handle(const sbp_frame_t *f)
 {
     uint8_t ver = sbp_ver(f->mode);
-    if (ver > V_ADDR) {
+    if (ver > V_PORTS) {
         sbpdev_ack(f, SBP_RESP_ERR_VERSION);
         return;
     }
@@ -332,6 +422,7 @@ void netctl_handle(const sbp_frame_t *f)
         case V_AP:      send_ap(); break;
         case V_IP:      send_ip(); break;
         case V_CLIENTS: send_clients(); break;
+        case V_PORTS:   get_ports(f); break;
         case V_ADDR: {
             const uint8_t q[1] = { netcfg_addr() };
             send(V_ADDR, q, 1);
@@ -361,7 +452,7 @@ void netctl_handle(const sbp_frame_t *f)
     case V_IP:   set_ip(f); break;
     case V_LINE: set_line(f); break;
     case V_ADDR:
-        if (f->len != 5 || f->payload[4] == 0) { /* 0 would swallow a device's frames on its default address */
+        if (f->len != 5 || f->payload[4] == 0 || f->payload[4] == 255) { /* a device's default / broadcast */
             sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
             break;
         }
@@ -372,7 +463,7 @@ void netctl_handle(const sbp_frame_t *f)
             send(V_ADDR, q, 1);
         }
         break;
-    default: /* statistics and clients are read-only */
+    default: /* statistics, clients and port information are read-only */
         sbpdev_ack(f, SBP_RESP_ERR_TYPE);
     }
 }

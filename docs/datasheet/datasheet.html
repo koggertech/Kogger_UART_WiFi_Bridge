@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.11.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.12.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.11.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.12.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -25,6 +25,7 @@
   h1 { font-size: 21pt; margin: 0; color: var(--accent); letter-spacing: 0.2px; }
   h2 { font-size: 12pt; margin: 14pt 0 5pt; padding-bottom: 2pt; border-bottom: 1.2pt solid var(--accent); color: var(--accent); break-after: avoid; }
   h3 { font-size: 9.5pt; margin: 9pt 0 3pt; break-after: avoid; }
+  h3 + p { break-after: avoid; }  /* a heading's intro line stays with the table below it */
   p { margin: 3pt 0 5pt; }
   ul { margin: 3pt 0 6pt; padding-left: 14pt; }
   li { margin: 1.5pt 0; }
@@ -61,14 +62,15 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.11.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.12.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
 <p>Firmware for a small ESP32‑C3‑MINI‑1U board that puts serial devices on Wi‑Fi. Two UART lines are relayed to UDP ports
 or TCP clients as <b>whole protocol frames</b> (Kogger SBP KP1/KP2, u‑blox UBX, MAVLink 1/2). The module itself is a
-<b>Kogger SBP device</b> (board ID 87), configured and monitored by any SBP host from either line or over the network, and updated over a
-wired line with the exchange KoggerApp uses for Kogger devices. It works as a Wi‑Fi <b>station</b> or runs its own <b>access point</b> with a DHCP server.
+<b>Kogger SBP device</b> (board ID 87), configured and monitored by any SBP host from either port (X1 or X2) or over the
+network, found by KoggerApp's usual device search, and updated over a wired line with the exchange KoggerApp uses for
+Kogger devices. It reports what it sees on each port. It works as a Wi‑Fi <b>station</b> or runs its own <b>access point</b> with a DHCP server.
 An optional <b>IP bridge</b> (SLIP + NAT) gives a Linux host without Wi‑Fi an IP route through the module.</p>
 
 <div class="cols">
@@ -79,7 +81,9 @@ An optional <b>IP bridge</b> (SLIP + NAT) gives a Linux host without Wi‑Fi an 
       unknown data passes as raw bytes, in order</li>
   <li>Two lines, each: off, UDP (fixed peer, last ≤ 4 senders, broadcast) or TCP client</li>
   <li>Station (8 saved networks, auto‑connect) or access point (≤ 10 clients, DHCP)</li>
-  <li>Control over SBP from any line or the network; replies go back on the request's channel</li>
+  <li>Two equal ports: SBP control and relay on either, rate set per port (provisional until confirmed)</li>
+  <li>Answers discovery (<code>ID_VERSION</code> to address 0); replies go back on the request's channel</li>
+  <li>Port information: which port the host is on, what is connected to each, devices heard, traffic by protocol</li>
   <li>Radio control: power 2–20 dBm, b/g/n, 20/40 MHz, LR, power save</li>
   <li>Safe update over the wire: A/B slots, SHA‑256, automatic rollback</li>
   <li>Link report with Wi‑Fi traffic and the last reset reason</li>
@@ -225,16 +229,16 @@ white silkscreen; Gerbers, drill, pick‑and‑place: <code>hardware/outputs/</c
 </figure>
 
 <h2 class="page">Protocol reference</h2>
-<p>The module is controlled over <b>Kogger SBP</b> on its serial port (line 0, 8N1, 921600 baud by default, 9600–4 000 000),
-on line 1, and over the network on the UDP port of any open line. The same line‑0 port also understands SLIP frames of
-the IP bridge; the first valid frame after boot selects SBP or SLIP until the next reboot. While line 0 relays to the
-network, the port speaks only SBP. All multi‑byte fields are little‑endian. Full text: <code>docs/SBP_WIFI.md</code>.</p>
+<p>The module is controlled over <b>Kogger SBP</b> on either serial port (8N1, 9600–4 000 000 baud; X1 921600, X2 115200 by
+default), in either role, and over the network on the UDP port of any open line. X1 also understands SLIP frames of the
+IP bridge; the first valid frame after boot selects SBP or SLIP on X1 until the next reboot, and while line 0 relays to
+the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Full text: <code>docs/SBP_WIFI.md</code>.</p>
 
 <h3>Frame (KP1)</h3>
 <table class="lay">
   <tr><th>Offset</th><th>Field</th></tr>
   <tr><td>0–1</td><td>sync <code>BB 55</code></td></tr>
-  <tr><td>2</td><td>route: device address. The module answers its own address: 0 by default; 87 (station) / 88 (AP) while a line relays; for one boot after an update or a role change with reboot, the address it had before</td></tr>
+  <tr><td>2</td><td>route: device address. The module answers its own address: 87 (station) / 88 (AP), or the one set with <code>ID_WIFI_NET</code> v6 (1–254). Discovery: a GETTING <code>ID_VERSION</code> to 0 or 255 is answered from the own address and relayed as well</td></tr>
   <tr><td>3</td><td>mode = type | version&lt;&lt;3 | mark&lt;&lt;6 | resp&lt;&lt;7; type 1 CONTENT, 2 SETTING, 3 GETTING; version 0–7</td></tr>
   <tr><td>4</td><td>id: command (0x57 <code>ID_WIFI</code>, 0x58 <code>ID_WIFI_NET</code>, common IDs below)</td></tr>
   <tr><td>5</td><td>len: payload length, 0–255</td></tr>
@@ -249,18 +253,20 @@ network, the port speaks only SBP. All multi‑byte fields are little‑endian. 
       It guards against accidents, not attackers.</li>
   <li>CONTENT may grow in later firmware (fields are appended): parse by minimum length. Unknown IDs are ignored.</li>
   <li>Replies go back on the channel of the request. Unsolicited frames (state, periodic report, v7 after a connection,
-      update progress) go to the channel of the last request.</li>
+      update progress) go to every channel that asked the module something within the last 60 s; a port with only a
+      device on it gets nothing.</li>
 </ul>
 
 <h3>Common device IDs</h3>
 <table>
   <tr><th>ID</th><th>GETTING</th><th>SETTING</th></tr>
-  <tr><td><code>ID_UART</code> 0x18</td><td>v0 {KEY, 1, U4 baud}; v1 {KEY, 1, current address}; v2 {KEY, boot address}</td>
-      <td>v0 {KEY, U1 1, U4 baud 9600–4 000 000}: answered at the old rate; v1 current address; v2 boot address</td></tr>
+  <tr><td><code>ID_UART</code> 0x18</td><td>v0 {KEY, 1, U4 baud of the asking port}; v1 {KEY, 1, own address}; v2 {KEY, own address}</td>
+      <td>v0 {KEY, U1 1, U4 baud 9600–4 000 000} for the asking port: answered at the old rate, provisional until a request
+      arrives at the new rate (else back after 10 s); v1/v2 own address 1–254, saved</td></tr>
   <tr><td><code>ID_VERSION</code> 0x20</td><td>v0 34 bytes ([1] board 87, [14..17] serial); v1 12‑byte UID; v2 9 bytes
       {bootMode, 0, 87, 0, 0, U2 0, fwMinor, fwMajor}</td><td>—</td></tr>
   <tr><td><code>ID_MARK</code> 0x21</td><td>v0 {U1 mark}</td><td>v0 {KEY}: sets the mark bit (cleared by a reboot and by <code>ID_BOOT</code> v0)</td></tr>
-  <tr><td><code>ID_FLASH</code> 0x23</td><td>—</td><td>{KEY}: v0 save rate, boot address and report period; v1 reload the saved boot address and period; v2 erase</td></tr>
+  <tr><td><code>ID_FLASH</code> 0x23</td><td>—</td><td>{KEY}: v0 confirm and save the rates of both ports and the report period; v1 reload the saved period; v2 erase</td></tr>
   <tr><td><code>ID_BOOT</code> 0x24</td><td>—</td><td>v0 {KEY}: reboot after the 5 s update window; v1 {KEY}: check the received image and boot it</td></tr>
   <tr><td><code>ID_UPDATE</code> 0x25</td><td>—</td><td>v0 {U2 chunk number, ≤ 253 data bytes}; wired lines only</td></tr>
 </table>
@@ -277,7 +283,7 @@ network, the port speaks only SBP. All multi‑byte fields are little‑endian. 
   <tr><td>v3</td><td>state: answered with CONTENT v0</td><td>connect {U1 flags bit0 save, U1 len, SSID 1–32, U1 len, password 0–64}</td></tr>
   <tr><td>v4</td><td>saved networks {U1 index, U1 total, U1 len, SSID}; passwords never</td><td>{0} disconnect, auto off; {1} auto on;
       {2, U1 len, SSID} forget one; {3} forget all</td></tr>
-  <tr><td>v5</td><td>relay of line 0, 10 bytes</td><td>{U1 mode 0 off/1 UDP/2 TCP, U1 own address 1–255, ip[4], U2 peer port,
+  <tr><td>v5</td><td>relay of line 0, 10 bytes</td><td>{U1 mode 0 off/1 UDP/2 TCP, U1 own address 1–254, ip[4], U2 peer port,
       U2 own port (0 = peer port)}; ip 0.0.0.0 answers senders, 255.255.255.255 broadcasts</td></tr>
   <tr><td>v6</td><td>relay statistics, 47 bytes: U1 state, ip[4], U2 port, U4 ×10 (up frames, bytes, packets, drops; down
       packets, bytes, frames, drops; frames for the module; TCP connects)</td><td>— (ERR_TYPE)</td></tr>
@@ -305,11 +311,16 @@ network, the port speaks only SBP. All multi‑byte fields are little‑endian. 
       <td>the same + {U1 len, password 8–63}; empty password with security on keeps the old one</td></tr>
   <tr><td>v2</td><td>address, 20 bytes {ip[4], mask[4], U1 DHCP, pool start[4], pool end[4], U2 lease min, U1 offer bit0 gateway, bit1 DNS}</td><td>the same 20 bytes</td></tr>
   <tr><td>v3</td><td>line, 18 bytes {U1 line, U1 mode 0 off/1 UDP/2 TCP, U1 dest 0 fixed/1 senders/2 broadcast, ip[4], U2 rport,
-      U2 lport, U4 baud, S1 TX pin, S1 RX pin, U1 uart}; no payload: both lines</td><td>the first 17 bytes; line 0 ignores baud and pins</td></tr>
+      U2 lport, U4 baud (running), S1 TX pin, S1 RX pin, U1 uart}; no payload: both lines</td><td>the first 17 bytes; baud sets the other line (either from the network), saved at once; ignored for the asking port's own line; pins to line 1 only</td></tr>
   <tr><td>v4</td><td>line statistics, 57 bytes {U1 line, U1 state, ip[4], U2 peer port, U1 senders, U4 ×12: up frames, bytes,
       packets, drops; down packets, bytes, frames, drops; frames for the module; TCP connects; UART RX overflows; UART TX drops}</td><td>—</td></tr>
   <tr><td>v5</td><td>AP clients {U1 index, U1 total, MAC[6], ip[4], S1 RSSI} each; none {0, 0}</td><td>—</td></tr>
-  <tr><td>v6</td><td>own address while relaying {U1}</td><td>{U1 address 1–255}, acknowledged from the old address</td></tr>
+  <tr><td>v6</td><td>own address {U1}</td><td>{U1 address 1–254}, acknowledged from the old address</td></tr>
+  <tr><td>v7</td><td>port information: {} both ports, {port}, {port, page}. Page 0, 116 bytes: flags (UART, bridging,
+      <b>asked through this port</b>, gets reports, SLIP, provisional, USB), rate now and saved, connected (nothing,
+      unreadable, SBP host, SBP devices, both, MAVLink, u‑blox, IP bridge), bytes, units by protocol both ways, SBP
+      requests/CONTENT, overflows. Page 1: devices heard (SBP address, board, firmware, serial; MAVLink system, type,
+      autopilot). Page 2: network peers of the line</td><td>— (ERR_TYPE)</td></tr>
 </table>
 
 <h3>Firmware update exchange</h3>
@@ -326,20 +337,23 @@ network, the port speaks only SBP. All multi‑byte fields are little‑endian. 
 <p class="n">Generated with <code>host/sbpframe.py</code>; <code>tools/make_datasheet.py</code> re‑checks every checksum below.</p>
 <table>
   <tr><th>What</th><th>Bytes (hex)</th></tr>
-  <tr><td>Read identity: GETTING ID_VERSION v0</td><td><code class="frame">BB 55 00 03 20 00 23 49</code><br><span class="n">answer: CONTENT v0, 34 bytes, board 87 at [1]</span></td></tr>
-  <tr><td>Read Wi-Fi state: GETTING ID_WIFI v0</td><td><code class="frame">BB 55 00 03 57 00 5A B7</code><br><span class="n">answer: CONTENT v0 (39 bytes + SSID)</span></td></tr>
-  <tr><td>Report every 500 ms: SETTING ID_WIFI v1 {U2 500}</td><td><code class="frame">BB 55 00 8A 57 02 F4 01 D8 FD</code></td></tr>
-  <tr><td>its acknowledgement: CONTENT v1 resp {OK, ck1, ck2}</td><td><code class="frame">BB 55 00 89 57 03 01 D8 FD B9 A5</code><br><span class="n">ck1 ck2 = checksum of the SETTING frame above</span></td></tr>
-  <tr><td>Port to 2 Mbaud: SETTING ID_UART v0 {KEY, 1, U4 2000000}</td><td><code class="frame">BB 55 00 82 18 09 4A 5D 6B C9 01 80 84 1E 00 A1 6C</code><br><span class="n">acknowledged at the old rate, then switched; ID_FLASH v0 saves it</span></td></tr>
-  <tr><td>Join a network: SETTING ID_WIFI v3 {save, &quot;Boat-AP&quot;, &quot;secret12&quot;}</td><td><code class="frame">BB 55 00 9A 57 12 01 07 42 6F 61 74 2D 41 50 08 73 65 63 72 65 74 31 32 40 DA</code><br><span class="n">OK at once, progress in CONTENT v0</span></td></tr>
-  <tr><td>Radio: SETTING ID_WIFI v7 {15 dBm, b/g/n, 20 MHz, no power save}</td><td><code class="frame">BB 55 00 BA 57 04 3C 07 01 00 59 3B</code></td></tr>
-  <tr><td>Relay line 0 over UDP to 10.0.0.10:14444, own address 87: SETTING ID_WIFI v5</td><td><code class="frame">BB 55 00 AA 57 0A 01 57 0A 00 00 0A 6C 38 6C 38 BF 27</code><br><span class="n">acknowledged from the old address</span></td></tr>
-  <tr><td>AP name &quot;Boat-1&quot;, WPA2, channel 6, 4 clients, password kept: SETTING ID_WIFI_NET v1</td><td><code class="frame">BB 55 57 8A 58 10 4A 5D 6B C9 06 00 04 01 06 42 6F 61 74 2D 31 00 19 1B</code><br><span class="n">sent to the bridging address 87</span></td></tr>
-  <tr><td>Role access point, reboot now: SETTING ID_WIFI_NET v0</td><td><code class="frame">BB 55 57 82 58 06 4A 5D 6B C9 01 01 14 79</code><br><span class="n">after this reboot the module stays at address 87: for one boot as the carried-over address, then as the address saved with ID_WIFI v5 above. With flags 0x03 (forget lines and address) the access point starts from its defaults instead: both lines UDP, address 88 after the carried-over boot (docs/SBP_WIFI.md §4)</span></td></tr>
-  <tr><td>Periodic report from the module: CONTENT ID_WIFI v1 (23 bytes)</td><td><code class="frame">BB 55 57 09 57 17 03 CC DB 16 00 00 62 07 00 00 00 00 70 00 00 00 24 00 10 0E 00 00 01 AA 81</code><br><span class="n">CONNECTED, RSSI -52 dBm, 5851/1890 B/s, totals, uptime 3600 s, last reset: power-on</span></td></tr>
-  <tr><td>Update, step 1: SETTING ID_BOOT v0 {KEY}</td><td><code class="frame">BB 55 00 82 24 04 4A 5D 6B C9 85 58</code><br><span class="n">opens the 5 s update window</span></td></tr>
-  <tr><td>Update, step 2: SETTING ID_UPDATE v0 {U2 1, 4 data bytes}</td><td><code class="frame">BB 55 00 82 25 06 01 00 E9 05 02 2F CD D0</code><br><span class="n">chunks up to 253 data bytes, numbered from 1; the first bytes of an ESP-IDF image are E9 ..</span></td></tr>
-  <tr><td>Update, step 3: SETTING ID_BOOT v1 {KEY}</td><td><code class="frame">BB 55 00 8A 24 04 4A 5D 6B C9 8D 90</code><br><span class="n">checks the image, answers OK and reboots</span></td></tr>
+  <tr><td>Find the module (discovery): GETTING ID_VERSION v2 to address 0</td><td><code class="frame">BB 55 00 13 20 00 33 79</code><br><span class="n">answered from the module&#39;s own address (87 station, 88 AP) and relayed on to a device behind it; KoggerApp sends this when a port opens</span></td></tr>
+  <tr><td>Read identity: GETTING ID_VERSION v0</td><td><code class="frame">BB 55 57 03 20 00 7A A5</code><br><span class="n">answer: CONTENT v0, 34 bytes, board 87 at [1]</span></td></tr>
+  <tr><td>Read Wi-Fi state: GETTING ID_WIFI v0</td><td><code class="frame">BB 55 57 03 57 00 B1 13</code><br><span class="n">answer: CONTENT v0 (39 bytes + SSID)</span></td></tr>
+  <tr><td>Which port am I on, what is on each: GETTING ID_WIFI_NET v7</td><td><code class="frame">BB 55 57 3B 58 00 EA BD</code><br><span class="n">answer: CONTENT v7 page 0 (116 bytes) for X1 and for X2; flags bit2 marks the port the request came through</span></td></tr>
+  <tr><td>Report every 500 ms: SETTING ID_WIFI v1 {U2 500}</td><td><code class="frame">BB 55 57 8A 57 02 F4 01 2F 07</code></td></tr>
+  <tr><td>its acknowledgement: CONTENT v1 resp {OK, ck1, ck2}</td><td><code class="frame">BB 55 57 89 57 03 01 2F 07 71 BE</code><br><span class="n">ck1 ck2 = checksum of the SETTING frame above</span></td></tr>
+  <tr><td>This port to 2 Mbaud: SETTING ID_UART v0 {KEY, 1, U4 2000000}</td><td><code class="frame">BB 55 57 82 18 09 4A 5D 6B C9 01 80 84 1E 00 F8 D7</code><br><span class="n">acknowledged at the old rate, then switched; saved when the next request arrives at 2 Mbaud, otherwise back after 10 s</span></td></tr>
+  <tr><td>X2 to 57600 from X1: SETTING ID_WIFI_NET v3 (line 1 record)</td><td><code class="frame">BB 55 57 9A 58 15 4A 5D 6B C9 01 01 01 00 00 00 00 6D 38 6D 38 00 E1 00 00 05 04 70 DB</code><br><span class="n">the other port: saved at once</span></td></tr>
+  <tr><td>Join a network: SETTING ID_WIFI v3 {save, &quot;Boat-AP&quot;, &quot;secret12&quot;}</td><td><code class="frame">BB 55 57 9A 57 12 01 07 42 6F 61 74 2D 41 50 08 73 65 63 72 65 74 31 32 97 54</code><br><span class="n">OK at once, progress in CONTENT v0</span></td></tr>
+  <tr><td>Radio: SETTING ID_WIFI v7 {15 dBm, b/g/n, 20 MHz, no power save}</td><td><code class="frame">BB 55 57 BA 57 04 3C 07 01 00 B0 F3</code></td></tr>
+  <tr><td>Relay line 0 over UDP to 10.0.0.10:14444, own address 87: SETTING ID_WIFI v5</td><td><code class="frame">BB 55 57 AA 57 0A 01 57 0A 00 00 0A 6C 38 6C 38 16 E9</code><br><span class="n">the address 87 is saved</span></td></tr>
+  <tr><td>AP name &quot;Boat-1&quot;, WPA2, channel 6, 4 clients, password kept: SETTING ID_WIFI_NET v1</td><td><code class="frame">BB 55 57 8A 58 10 4A 5D 6B C9 06 00 04 01 06 42 6F 61 74 2D 31 00 19 1B</code></td></tr>
+  <tr><td>Role access point, reboot now: SETTING ID_WIFI_NET v0</td><td><code class="frame">BB 55 57 82 58 06 4A 5D 6B C9 01 01 14 79</code><br><span class="n">after the reboot the module answers its saved address, here 87 (saved with ID_WIFI v5 above); with nothing saved, or with flags 0x03 (forget lines and address), the access point default 88</span></td></tr>
+  <tr><td>Periodic report from the module: CONTENT ID_WIFI v1 (23 bytes)</td><td><code class="frame">BB 55 57 09 57 17 03 CC DB 16 00 00 62 07 00 00 E0 FD 1C 00 40 EF 07 00 10 0E 00 00 01 45 0E</code><br><span class="n">CONNECTED, RSSI -52 dBm, 5851/1890 B/s, totals, uptime 3600 s, last reset: power-on</span></td></tr>
+  <tr><td>Update, step 1: SETTING ID_BOOT v0 {KEY}</td><td><code class="frame">BB 55 57 82 24 04 4A 5D 6B C9 DC 10</code><br><span class="n">opens the 5 s update window</span></td></tr>
+  <tr><td>Update, step 2: SETTING ID_UPDATE v0 {U2 1, 4 data bytes}</td><td><code class="frame">BB 55 57 82 25 06 01 00 E9 05 02 2F 24 36</code><br><span class="n">chunks up to 253 data bytes, numbered from 1; the first bytes of an ESP-IDF image are E9 ..</span></td></tr>
+  <tr><td>Update, step 3: SETTING ID_BOOT v1 {KEY}</td><td><code class="frame">BB 55 57 8A 24 04 4A 5D 6B C9 E4 48</code><br><span class="n">checks the image, answers OK and reboots</span></td></tr>
 </table>
 
 <h3>IP bridge (SLIP) and text commands</h3>
@@ -432,6 +446,7 @@ back after 180 s. Updates from the network are refused. File: <code>KoggerWiFi_&
   <tr><td>Firmware update</td><td>bench, 921600 baud</td><td>885 120 B in 80 s (10.8 KB/s); lost chunk recovered</td></tr>
   <tr><td>Firmware update</td><td>field, saturated 921600 port</td><td>929 KB in 226 s, 5/5 checks</td></tr>
   <tr><td>Firmware update 0.10 → 0.11</td><td>field, 3 Mbaud</td><td>932 512 B in 50 s (18.1 KB/s), 7/7 checks</td></tr>
+  <tr><td>Firmware update 0.11 → 0.12</td><td>bench, 921600, AP role</td><td>938 800 B in 84 s (10.9 KB/s), 7/7 checks</td></tr>
   <tr><td>Relay to a boat network</td><td>field, UDP</td><td>~270 datagrams, ~890 frames in 8 s, no loss</td></tr>
   <tr><td>Auto‑connect after power‑up</td><td>bench</td><td>connected after 7.6 s without commands</td></tr>
   <tr><td>Baud switching</td><td>bench adapter / head unit</td><td>9600 … 2 000 000: 28/28 / 2, 3, 4 Mbaud</td></tr>
@@ -442,9 +457,10 @@ back after 180 s. Updates from the network are refused. File: <code>KoggerWiFi_&
 </figure>
 
 <h2>Status and security</h2>
-<p><span class="v">Verified on hardware (0.1–0.11):</span> SBP device checks, baud switching, IP bridge through NAT, station
+<p><span class="v">Verified on hardware (0.1–0.12):</span> SBP device checks, baud switching, IP bridge through NAT, station
 auto‑connect, firmware update, recovery from a lost chunk, a corrupted image refused, relay to a boat network over UDP; 0.11.0 installed in the field
-over SBP (7/7 checks). <span class="nv">Not yet verified on hardware:</span> the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; the access‑point role; UART line 1; writing ID_WIFI_NET settings; the native USB variant; the IP bridge daemon on a Linux host.</p>
+over SBP (7/7 checks); 0.12.0 port rules on a bench module in both roles (29/29); 0.12.0 on the head unit's module (7/7) with a sonar
+on the access point's X2 seen over an LR‑only link. <span class="nv">Not yet verified on hardware:</span> the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.</p>
 <div class="note warn"><b>Security.</b> Kogger SBP has no authentication; any client of the module's network can
 reconfigure it. Images are not signed; updates are accepted only over a wired line. The default access‑point password is
 public. Change it before using the access‑point role and keep the module on a trusted network (<code>SECURITY.md</code>).</div>

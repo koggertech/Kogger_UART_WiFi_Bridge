@@ -1,19 +1,20 @@
 # Parameters
 
-Every setting of firmware 0.11.0 with its default and range, the build options, the timing constants and the buffers.
+Every setting of firmware 0.12.0 with its default and range, the build options, the timing constants and the buffers.
 The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, `sdkconfig.defaults`,
 `partitions.csv`); the file is named where it helps.
 
 ## 1. Run‑time settings (saved in NVS, namespace `wb`)
 
-### Host port and SBP identity (`sbpdev.c`)
+### Ports and SBP identity (`sbpdev.c`, `ports.c`)
 
 | Setting | Default | Range | Set with | Saved |
 |---|---|---|---|---|
-| Line 0 baud rate | 921600 (build option) | 9600 … 4 000 000 | `ID_UART` v0 | by `ID_FLASH` v0 |
-| Boot SBP address | 0 | 0 … 255 | `ID_UART` v2 | by `ID_FLASH` v0 |
-| Current SBP address | boot address, or the bridging address while a line bridges | 0 … 255 | `ID_UART` v1 | no (one boot across an update or role change) |
+| X1 (line 0) baud rate | 921600 (build option) | 9600 … 4 000 000 | `ID_UART` v0 through X1, `ID_WIFI_NET` v3 | through the asking port: when a request arrives at the new rate or by `ID_FLASH` v0, else back after 10 s; otherwise at once |
+| X2 (line 1) baud rate | 115200 | 9600 … 4 000 000 | `ID_UART` v0 through X2, `ID_WIFI_NET` v3 | the same rule |
+| Own SBP address | 87 station, 88 access point | 1 … 254 | `ID_WIFI_NET` v6, `ID_UART` v1/v2, `ID_WIFI` v5 | at once |
 | Link report period | 1000 ms | 0 (off), 100 … 60000 ms, clamped | `ID_WIFI` v1 | by `ID_FLASH` v0 |
+| Unsolicited frames | to every channel that asked within 60 s | — | — | — |
 
 ### Station (`manager.c`)
 
@@ -28,7 +29,7 @@ The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, 
 | Setting | Default | Range |
 |---|---|---|
 | TX power limit | 80 (20 dBm) | 8 … 80 in 0.25 dBm; 81 … 84 stored as 80; applied in 11 steps (2 … 20 dBm) |
-| Protocols | b/g/n (0x07) | 0x01 b, 0x03 b/g, 0x07 b/g/n, 0x08 LR, 0x0F b/g/n + LR; LR only is refused in the AP role over SBP (the text `RADIO` command does not check it, known issue) |
+| Protocols | b/g/n (0x07) | 0x01 b, 0x03 b/g, 0x07 b/g/n, 0x08 LR, 0x0F b/g/n + LR; LR only in the AP role admits only Espressif LR stations (0.12) |
 | Bandwidth | 20 MHz | 20 / 40 MHz (40 only with 11n) |
 | Power save | off | off, MIN_MODEM, MAX_MODEM (not applied in the AP role) |
 

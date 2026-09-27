@@ -14,8 +14,8 @@ static ap_cfg_t s_ap;
 static ip_cfg_t s_ip = { .ip = { 10, 0, 0, 10 }, .mask = { 255, 255, 255, 0 }, .dhcp = 1,
                          .pool_start = { 10, 0, 0, 11 }, .pool_end = { 10, 0, 0, 30 }, .lease_min = 120, .offer = 0 };
 /* Line 1 pins: connector X2 of the module board (schematic 2026-09-26: GPIO5 -> R7 -> pin 1 TX,
- * pin 2 -> R11 -> GPIO4 RX). Both lines start switched off: a station keeps talking to its host on
- * address 0 exactly as before; the access point role turns them on below. */
+ * pin 2 -> R11 -> GPIO4 RX). Both lines start switched off in the station role; the access point role
+ * turns them on below. The rates here are defaults only: the running rates belong to ports.c. */
 static line_cfg_t s_line[NLINES] = {
     { .mode = LINE_OFF, .dest = DEST_SENDERS, .rport = 14444, .lport = 14444, .baud = 921600, .tx_pin = 21, .rx_pin = 20 },
     { .mode = LINE_OFF, .dest = DEST_SENDERS, .rport = 14445, .lport = 14445, .baud = 115200, .tx_pin = 5, .rx_pin = 4 },
@@ -94,8 +94,8 @@ void netcfg_load(void)
     ip_cfg_t ip;
     if (get_blob(h, "ipcfg", &ip, sizeof ip) && netcfg_ip_ok(&ip))
         s_ip = ip;
-    if (nvs_get_u8(h, "maddr", &v) == ESP_OK && v != 0)
-        s_addr = v;
+    if (nvs_get_u8(h, "maddr", &v) == ESP_OK && v != 0 && v != 255)
+        s_addr = v; /* 0.11 let 255 through; it is the broadcast route now: the role's default instead */
     for (int i = 0; i < NLINES; i++) {
         line_cfg_t l;
         char key[8];
@@ -117,7 +117,7 @@ void netcfg_load(void)
                 s_line[0].dest = u32ip(r.ip) == 0 ? DEST_SENDERS : DEST_FIXED;
                 s_line[0].rport = r.rport;
                 s_line[0].lport = r.lport;
-                if (r.addr != 0)
+                if (r.addr != 0 && r.addr != 255)
                     s_addr = r.addr;
                 nvs_set_blob(h, "line0", &s_line[0], sizeof s_line[0]);
                 nvs_set_u8(h, "maddr", s_addr);
@@ -126,6 +126,10 @@ void netcfg_load(void)
             }
         }
     }
+    /* X2's saved rate is a port setting: kept apart from the line record, so "forget lines" keeps it */
+    uint32_t b1;
+    if (nvs_get_u32(h, "baud1", &b1) == ESP_OK && b1 >= 9600 && b1 <= 4000000)
+        s_line[1].baud = b1;
     nvs_close(h);
     ESP_LOGI(TAG, "role %s, AP \"%s\" ch %u, %u.%u.%u.%u, line0 mode %u, line1 mode %u pins %d/%d",
              s_role == ROLE_AP ? "AP" : "station", s_ap.ssid, s_ap.channel, s_ip.ip[0], s_ip.ip[1], s_ip.ip[2],
@@ -299,6 +303,35 @@ bool netcfg_set_line(int line, const line_cfg_t *c)
     return true;
 }
 
+/* The rate goes into "baud1" and, when a line 1 record exists, into it too (0.11 reads only the record). */
+static bool put_baud1(uint32_t baud, bool erase)
+{
+    nvs_handle_t h;
+    if (nvs_open("wb", NVS_READWRITE, &h) != ESP_OK)
+        return false;
+    bool ok = (erase ? nvs_erase_key(h, "baud1") != ESP_FAIL : nvs_set_u32(h, "baud1", baud) == ESP_OK);
+    line_cfg_t l;
+    if (ok && get_blob(h, "line1", &l, sizeof l)) {
+        l.baud = baud;
+        ok = nvs_set_blob(h, "line1", &l, sizeof l) == ESP_OK;
+    }
+    ok = ok && nvs_commit(h) == ESP_OK;
+    nvs_close(h);
+    if (ok)
+        s_line[1].baud = baud;
+    return ok;
+}
+
+bool netcfg_set_baud1(uint32_t baud)
+{
+    return baud >= 9600 && baud <= 4000000 && put_baud1(baud, false);
+}
+
+bool netcfg_erase_baud1(void)
+{
+    return put_baud1(115200, true);
+}
+
 uint8_t netcfg_addr(void)
 {
     return s_addr;
@@ -306,8 +339,8 @@ uint8_t netcfg_addr(void)
 
 bool netcfg_set_addr(uint8_t a)
 {
-    if (a == 0)
-        return false; /* 0 is where devices sit by default: bridging on it would swallow their frames */
+    if (a == 0 || a == 255)
+        return false; /* 0 is where devices sit by default, 255 is the broadcast route */
     nvs_handle_t h;
     if (nvs_open("wb", NVS_READWRITE, &h) != ESP_OK)
         return false;

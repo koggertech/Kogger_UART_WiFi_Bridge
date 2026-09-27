@@ -4,7 +4,8 @@
  * packets of at most 512 bytes (kpack); the network stream is cut into whole frames again before it
  * goes to the UART, so frames of the module itself never land inside a relayed frame.
  * Frames addressed to the module's own SBP address are handled locally - from a UART line or from
- * the network (then the answer goes back to the sender) - everything else is relayed.
+ * the network (then the answer goes back to the sender) - everything else is relayed. Discovery (GETTING
+ * ID_VERSION to route 0 or 255) is answered by the module and relayed too.
  * Buffers, back-pressure, drop rules: docs/RELAY.md; lines and roles: docs/NETWORK.md.
  */
 #pragma once
@@ -50,7 +51,7 @@ typedef struct {
 /** Buffers + saved configuration. Before link_start(). */
 void relay_init(void);
 
-/** Line 1 buffers, own address while bridging, SBP lock of the host port, network tasks.
+/** Line 1 buffers, own address, SBP lock of X1 while line 0 bridges, network tasks.
  *  After uline_start(), relay_set_netif() and sbpdev_load(), before link_start(). */
 void relay_start(void);
 
@@ -63,13 +64,24 @@ bool relay_active(void);                      /**< line 0 bridges (link.c hands 
 bool relay_line_set(int line, const line_cfg_t *c);   /**< save + apply (ID_WIFI_NET v3) */
 void relay_line_stats(int line, relay_stats_t *s);
 
-/** Save the module's own address while bridging and apply it (ID_WIFI_NET v6); 0 is refused. */
+/** Save the module's own address and apply it (ID_WIFI_NET v6, ID_UART v1/v2); 0 and 255 are refused. */
 bool relay_set_addr(uint8_t addr);
 
 void relay_get_cfg(relay_cfg_t *c);
 bool relay_cfg_ok(const relay_cfg_t *c);
 bool relay_set_cfg(const relay_cfg_t *c);
 void relay_get_stats(relay_stats_t *s);       /**< line 0 */
+
+/** A network peer of a line (ID_WIFI_NET v7 page 2): address, port, age of its last data in 0.1 s. */
+typedef struct {
+    uint8_t  ip[4];
+    uint16_t port;
+    uint16_t age_ds;
+} relay_peer_t;
+
+/** The line's mode and state (relay_state_t) and up to max peers: the fixed/TCP/broadcast peer, or the
+ *  senders a DEST_SENDERS line answers. Returns the number of peers. */
+int relay_line_peers(int line, uint8_t *mode, uint8_t *state, relay_peer_t *out, int max);
 
 /** Station has an IP address / access point is running. */
 void relay_wifi(bool up);

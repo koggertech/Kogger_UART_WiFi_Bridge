@@ -12,7 +12,10 @@ The contract is in [SBP_WIFI.md](SBP_WIFI.md) §4 and the relay buffers in [RELA
 
 ## 1. Lines
 
-- **Line 0** = X1 = UART0: the host port (KoggerApp, the bridge daemon) or a device port.
+- **Line 0** = X1 = UART0 (or the native USB in the USB variant). A host (KoggerApp, the IP bridge daemon) or a device
+  can sit on it.
+- The two lines are equal (0.12): a host can configure the module through either, and either can carry a device.
+  Only the IP bridge (SLIP) is X1's alone.
 - **Line 1** = X2 = UART1, default pins TX 5 / RX 4. For another board the pins can be set over SBP, from
   {0, 1, 3, 4, 5, 6, 7, 10}. New pins take effect after a reboot: a running UART is not reconfigured.
 
@@ -89,43 +92,49 @@ Each line maps to its own UDP port or to a TCP client:
 
 **Defaults:**
 
-| Role | Line 0 (X1) | Line 1 (X2) | Own SBP address while bridging |
+| Role | Line 0 (X1) | Line 1 (X2) | Own SBP address |
 |---|---|---|---|
-| station | off: host port | off; when enabled: UDP senders 14445, 115200, pins 5/4 | 87 |
+| station | off; when enabled: UDP senders 14444, 921600 | off; when enabled: UDP senders 14445, 115200, pins 5/4 | 87 |
 | access point | UDP senders, port 14444 | UDP senders, port 14445 | 88 |
 
 - A role's defaults apply while a line has not been saved. Saved lines are shared by both roles. The "forget lines"
-  flag of a role change erases them together with the address, and the new role starts from its defaults.
+  flag of a role change erases them together with the address, and the new role starts from its defaults. The saved
+  rates of X1 and X2 are port settings and stay (0.12).
 - Two UDP lines cannot listen on the same port; such a setting is refused.
 - The 0.7 relay setting (`ID_WIFI` v5) is a view of line 0. On the first boot of 0.10 a saved 0.7 record moves into
   line 0 (a switched‑off record does not). The old record stays for a rollback to 0.7.
 
-**The module's own address.** While any line bridges, the module answers only its own address: 87 in the station role
-and 88 in the AP role by default (`ID_WIFI_NET` v6 or `ID_WIFI` v5). Everything else from a line goes to the network,
-so a device on the line keeps its own address; a sonar is usually 0. When no line bridges, the boot address (0)
-applies. The different defaults 87/88 let a pair of modules on one link be told apart.
-- Address 0 is refused as the module's address (0.11): devices sit there by default. `ID_WIFI` v5 with mode "off" no
-  longer writes the address.
-- The address in use (for example one set with `ID_UART` v1, or the default 0) survives an update or a role change
-  with reboot for one boot, even when a line bridges (0.11). The bridging address takes over after the next reboot or
-  after any line or address setting (`ID_WIFI_NET` v3/v6, `ID_WIFI` v5).
-- **Known issue (0.11):** a role change with reboot from the station default (address 0) brings the AP up with both
-  lines relaying while the module answers address 0 for that boot, taking SETTING/GETTING frames meant for a device
-  at 0. Send `ID_WIFI_NET` v6 or reboot once more after the role change ([SBP_WIFI.md](SBP_WIFI.md) §4).
+**The module's own address** is 87 in the station role and 88 in the AP role, or the one set with `ID_WIFI_NET` v6
+(also `ID_UART` v1/v2, `ID_WIFI` v5). It is fixed (0.12): whether a line bridges or not, and whichever line, the
+module answers the same address, so setting up one port never moves the address a host on the other port talks to.
+Everything else from a line goes to the network, so a device on the line keeps its own address; a sonar is usually 0.
+The different defaults 87/88 let a pair of modules on one link be told apart.
+- **Discovery** (0.12): a GETTING `ID_VERSION` to address 0 or 255 is answered from the module's own address and
+  relayed as well, so the device behind the module answers it too. That is how KoggerApp finds the module on any port
+  without knowing its address ([SBP_WIFI.md](SBP_WIFI.md) §2).
+- 0 and 255 are refused as the module's address: devices sit on 0 by default, 255 is the broadcast route. `ID_WIFI`
+  v5 with mode "off" does not write the address.
+- The address is saved at once and is the same after any reboot (0.12; 0.11 carried a one‑boot address over updates
+  and role changes, which let a fresh access point take the frames of a device at 0 for one boot).
 
 ## 5. Control over any line and over the network
 
-The module takes frames with its own address (SETTING/GETTING) from everywhere: UART0, UART1, and the network on the
-port of any open line. It takes them even from a sender to which the line relays nothing (not its fixed peer). So the
-module is reachable on any open port.
+The module takes frames with its own address (SETTING/GETTING), and discovery, from everywhere: X1, X2, and the
+network on the port of any open line, in either role. It takes them even from a sender to which the line relays nothing
+(not its fixed peer). So the module is reachable on any port.
 
 - The answer goes back where the request came from: the same UART, or the same sender from the same port.
-- Unsolicited frames go to where the last request came from: state changes, the periodic v1 report and update
-  progress. Scan results go to the channel that started the scan.
-  - In the station role this is the host port by default.
-  - In the AP role it is nowhere until someone asks, because a device on X1 has no use for the module's frames.
-- `ID_UART` v0 (rate) refers to the UART behind the request's channel. A request over UART1 or to line 1's port changes
-  line 1's rate, which is saved at once; others change line 0's rate.
+- Unsolicited frames — state changes, the periodic v1 report, update progress — go to every channel that asked the
+  module something within the last 60 s: each UART on its own, plus the last network sender (0.12). A port with only a
+  device on it never asks, so the module never writes its own frames into it. Scan results go to the channel that
+  started the scan.
+- **Rates of both ports** (0.12). `ID_UART` v0 changes the port behind the request, provisionally: it is saved when a
+  request arrives through that port at the new rate (or with `ID_FLASH` v0), otherwise the port returns to its
+  previous rate after 10 s. `ID_WIFI_NET` v3 changes the other port's rate, or either from the network, and saves it at
+  once; for the asking port's own line its rate field is ignored ([SBP_WIFI.md](SBP_WIFI.md) §2, §4).
+- **What is on each port** (0.12): `ID_WIFI_NET` v7 tells which port the request came through, the rates, whether a
+  host, SBP devices, MAVLink, u‑blox or unreadable bytes are there, the devices heard (address, board, firmware;
+  MAVLink system) and the network peers of the line ([SBP_WIFI.md](SBP_WIFI.md) §4.1).
 - **Firmware updates from the network are refused** (0.11). `ID_UPDATE` and `ID_BOOT` v1 from a network peer get
   ERR_RUNTIME. The SBP key is public, the image is not signed, and anyone who knows the Wi‑Fi password can become a
   client. Firmware is changed only over a wire (X1 or X2). Reboot (`ID_BOOT` v0) and role changes still work from the
@@ -146,8 +155,8 @@ been checked.
   packet counts as lost and the line state is "no peer".
 - Datagrams from the module's own address, such as a returning broadcast, are not written to a UART.
 - Both RX lines have a weak pull‑up ([HARDWARE.md](HARDWARE.md)).
-- "LR only" is refused in the AP role over SBP (0.11): no ordinary device could join such an AP. **Known issue:** the
-  text command `RADIO mode=lr` (SLIP) does not check this and restarts the AP without the 0.2 s delay.
+- "LR only" is allowed in the AP role (0.12; 0.11 refused it): only Espressif stations with LR, such as another module set to LR or b/g/n + LR, can join such an AP; no phone or laptop can, and a wrong setting is undone over a wire or from such a station. The text command `RADIO` (SLIP) restarts the AP without the 0.2 s delay of the SBP path
+  (known issue).
 - In the AP role the module sends no text notifications on X1 until X1 is locked to SLIP (0.11): a device may sit there.
 
 ## 7. Verification status
@@ -156,7 +165,16 @@ been checked.
   line 1 off; station role, address 87. The boat stream flows, and all `ID_WIFI_NET` settings read back over SBP.
 - **0.11.0 in the field** (head unit): updated from 0.10.0 over SBP; role, access point, addresses, lines, address 87
   and radio settings were all kept.
-- **Not yet verified on hardware:** the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; the access‑point role; UART line 1; writing `ID_WIFI_NET` settings; the native USB variant; the IP bridge daemon on a Linux host.
+- **0.12.0 on the bench** (module on X1 through a USB‑UART adapter): updated from 0.11.0 over SBP in the access‑point
+  role, confirmed; `tools/bench_ports.py` 29/29 in both roles (discovery, port information, provisional and saved
+  rates of X1, the rate of X2 set from X1, addresses 0/255 refused); `tools/bench_sbp.py` 38/38 in the station role;
+  role changed to station and back with every setting kept.
+- **0.12.0 in the field** (head unit): updated from 0.11.0 over SBP at 2 Mbaud (7/7 checks, confirmed); role, lines,
+  address 87 and radio settings kept. With the bench module as the access point, both ends in "LR only": the head
+  unit's module joined over LR (negotiated mode LR, −40 dBm at the bench) and a sonar on the access point's X2
+  (line 1 moved to UDP 14444, the port the head unit sends to) reached the head unit's application, echogram shown
+  (checked by eye).
+- **Not yet verified on hardware:** the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
 - `tools/bench_sbp.py` changes nothing permanently without flags. Writing line 1 needs `--write-test`, and the role
   change needs `--role-test`.
 

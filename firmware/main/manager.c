@@ -24,6 +24,8 @@
 #include "netcfg.h"
 #include "netctl.h"
 #include "ota.h"
+#include "portinfo.h"
+#include "ports.h"
 #include "proto.h"
 #include "radio.h"
 #include "relay.h"
@@ -74,6 +76,7 @@ typedef struct {
 typedef struct {
     sbp_frame_t f;       /* f.payload points at payload[] below */
     sbp_chan_t  ch;      /* where it came from: the answers go there */
+    int64_t     rx_us;   /* when it was received (confirms a provisional port rate, ports.h) */
     uint8_t     payload[];
 } sbp_blob_t;
 
@@ -294,7 +297,7 @@ static void status_fields(char *out, size_t cap)
 
 #define WIFI_V0_FIXED 39
 
-static void sbp_send_status(void)
+static void sbp_send_status(bool notify)
 {
     status_t s;
     snapshot(&s);
@@ -317,10 +320,10 @@ static void sbp_send_status(void)
     sbp_put_u32(&p[34], s.ws.tx_bps);
     p[38] = (uint8_t)sl;
     memcpy(&p[39], s.ssid, sl);
-    sbpdev_send(SBP_T_CONTENT, 0, SBP_ID_WIFI, p, (uint8_t)(WIFI_V0_FIXED + sl));
+    (notify ? sbpdev_notify : sbpdev_send)(SBP_T_CONTENT, 0, SBP_ID_WIFI, p, (uint8_t)(WIFI_V0_FIXED + sl));
 }
 
-static void sbp_send_link(void)
+static void sbp_send_link(bool notify)
 {
     wifistat_t ws;
     wifistat_get(&ws);
@@ -341,16 +344,16 @@ static void sbp_send_link(void)
     sbp_put_u32(&p[14], ws.tx_total);
     sbp_put_u32(&p[18], (uint32_t)(esp_timer_get_time() / 1000000));
     p[22] = (uint8_t)esp_reset_reason(); /* 0.11: why the module last restarted (docs/SBP_WIFI.md) */
-    sbpdev_send(SBP_T_CONTENT, 1, SBP_ID_WIFI, p, sizeof p);
+    (notify ? sbpdev_notify : sbpdev_send)(SBP_T_CONTENT, 1, SBP_ID_WIFI, p, sizeof p);
 }
 
-static void sbp_send_radio(void)
+static void sbp_send_radio(bool notify)
 {
     radio_cfg_t c;
     radio_now_t n;
     radio_get(&c, &n);
     uint8_t q[8] = { c.power, c.proto, c.bw, c.ps, n.power, n.phy, n.proto, n.bw };
-    sbpdev_send(SBP_T_CONTENT, 7, SBP_ID_WIFI, q, sizeof q);
+    (notify ? sbpdev_notify : sbpdev_send)(SBP_T_CONTENT, 7, SBP_ID_WIFI, q, sizeof q);
 }
 
 static void sbp_send_saved(void)
@@ -394,7 +397,7 @@ static void set_state(state_t st)
     status_fields(f, sizeof f);
     ctl_send("* STATE %s", f);
     if (sbpdev_has_listener())
-        sbp_send_status();
+        sbp_send_status(true);
     ESP_LOGI(TAG, "%s", f);
 }
 
@@ -763,6 +766,7 @@ void manager_post_sbp(const sbp_frame_t *f, const sbp_chan_t *ch)
         return;
     b->f = *f;
     b->ch = *ch;
+    b->rx_us = esp_timer_get_time();
     memcpy(b->payload, f->payload, f->len);
     b->f.payload = b->payload;
     msg_t m = { .type = M_SBP, .buf = b };
@@ -898,7 +902,7 @@ static void on_got_ip(void)
     S.user_target = false;
     set_state(ST_CONNECTED);
     if (sbpdev_has_listener())
-        sbp_send_radio(); /* the negotiated mode is known only now */
+        sbp_send_radio(true); /* the negotiated mode is known only now */
 }
 
 /* Every 500 ms: a lost event or a refused driver call must not leave the station stuck for good. */
@@ -948,7 +952,7 @@ static void on_ap_client(int ev, const uint8_t *mac, uint32_t ip)
     ctl_send("* AP_CLIENT event=%s mac=" MACSTR " ip=" IPSTR, EV[ev], MAC2STR(mac), IP2STR(&a));
     ESP_LOGI(TAG, "client %s " MACSTR " " IPSTR, EV[ev], MAC2STR(mac), IP2STR(&a));
     if (sbpdev_has_listener())
-        sbp_send_status(); /* the client count is in it */
+        sbp_send_status(true); /* the client count is in it */
 }
 
 /* ---- ID_WIFI (0x57) -------------------------------------------------------------- */
@@ -964,7 +968,7 @@ static void sbp_wifi(const sbp_frame_t *f)
         if (set)
             sbpdev_ack(f, SBP_RESP_ERR_TYPE);
         else
-            sbp_send_status();
+            sbp_send_status(false);
         break;
     case 1: /* link report; SETTING = report period */
         if (set) {
@@ -981,7 +985,7 @@ static void sbp_wifi(const sbp_frame_t *f)
             report_restart();
             sbpdev_ack(f, SBP_RESP_OK);
         }
-        sbp_send_link();
+        sbp_send_link(false);
         break;
     case 2: /* scan (GETTING or SETTING both start one) */
         if (S.scan_for_sbp) {
@@ -1003,7 +1007,7 @@ static void sbp_wifi(const sbp_frame_t *f)
         break;
     case 3: { /* connect: flags, ssid_len, ssid, pass_len, pass */
         if (!set) {
-            sbp_send_status();
+            sbp_send_status(false);
             break;
         }
         if (s_ap) {
@@ -1124,8 +1128,10 @@ static void sbp_wifi(const sbp_frame_t *f)
             }
             radio_cfg_t want = { p[0], p[1], p[2], p[3] };
             bool reconnect = false;
-            if (!radio_cfg_ok(&want) || (s_ap && want.proto == RADIO_P_LR)) {
-                sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD); /* an LR-only access point locks out phones and laptops */
+            /* LR only is allowed for an access point too (0.12): phones and laptops cannot join it, only
+             * Espressif stations with LR, such as another module (a module-to-module link). */
+            if (!radio_cfg_ok(&want)) {
+                sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
                 break;
             }
             sbpdev_ack(f, radio_set(&want, &reconnect) ? SBP_RESP_OK : SBP_RESP_ERR_RUNTIME);
@@ -1134,7 +1140,7 @@ static void sbp_wifi(const sbp_frame_t *f)
                 radio_reassociate();
             }
         }
-        sbp_send_radio();
+        sbp_send_radio(false);
         break;
     }
     default:
@@ -1383,13 +1389,20 @@ static void manager_task(void *arg)
         case M_SBP: {
             sbp_blob_t *b = m.buf;
             ota_note_host_frame();
-            sbpdev_set_channel(&b->ch);
+            int port = sbpdev_chan_port(&b->ch);
+            if (port >= 0) {
+                portinfo_module_rx(port);
+                ports_note_request(port, b->rx_us);
+            }
+            sbpdev_begin_request(&b->ch);
             handle_sbp(&b->f);
+            sbpdev_end_request();
             free(b);
             break;
         }
         case M_OTA_TICK:
             ota_tick();
+            ports_tick();
             supervise();
             break;
         case M_SCAN_DONE:    on_scan_done(m.arg); break;
@@ -1400,13 +1413,13 @@ static void manager_task(void *arg)
             radio_post_start(); /* power limit again after every (re)start */
             set_state(ST_AP);
             if (sbpdev_has_listener())
-                sbp_send_radio();
+                sbp_send_radio(true);
             break;
         case M_AP_STOP:      set_state(ST_IDLE); break;
         case M_AP_CLIENT:    on_ap_client(m.arg, m.mac, m.ip); break;
         case M_REPORT:
             if (sbpdev_has_listener())
-                sbp_send_link();
+                sbp_send_link(true);
             break;
         }
     }

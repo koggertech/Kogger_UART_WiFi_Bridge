@@ -153,7 +153,8 @@ def net_checks(d, a, fw):
     code, echo = d.setting(SB.ID_WIFI_NET, 3, bytes(4) + bytes(17))
     check('SETTING ID_WIFI_NET without key -> ERR_KEY', code == 7 and echo, (code, echo))
     code, _ = d.setting(SB.ID_WIFI_NET, 7, KEY)
-    check('ID_WIFI_NET v7 -> ERR_VERSION', code == 5, code)
+    check('SETTING ID_WIFI_NET v7 -> ERR_TYPE (port information is read-only, 0.12; 0.11: ERR_VERSION)',
+          code in (5, 6), code)
     code, _ = d.setting(SB.ID_WIFI_NET, 4, KEY)
     check('SETTING ID_WIFI_NET v4 (statistics) -> ERR_TYPE', code == 6, code)
     code, _ = d.setting(SB.ID_WIFI_NET, 2, SB.ipcfg_payload('10.0.0.10', '255.255.255.0', True, '10.0.1.11', '10.0.1.30'))

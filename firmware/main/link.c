@@ -10,7 +10,10 @@
 #include "freertos/task.h"
 #include "sdkconfig.h"
 
+#include "esp_timer.h"
+
 #include "frame.h"
+#include "portinfo.h"
 #include "relay.h"
 
 #if CONFIG_WB_LINK_USB_SERIAL_JTAG
@@ -41,12 +44,12 @@ static const char *TAG = "link";
 #define LONG_IDLE_MS  20      /* no byte for this long: release an unfinished frame candidate */
 
 static link_rx_handler_t s_on_ip, s_on_ctl;
-static link_sbp_handler_t s_on_sbp;
 static frame_dec_t s_dec;
 static uint8_t s_decbuf[FRAME_MAX_PAYLOAD + 3];
 static sbp_dec_t s_sbp;
 static volatile link_proto_t s_proto = LINK_PROTO_NONE;
 static volatile uint32_t s_baud, s_pending_baud;
+static volatile int64_t s_switched_us;  /* when the last rate change took effect */
 static volatile uint32_t s_tx_frames, s_tx_dropped, s_rx_overflows;
 
 /* TX ring: writers copy whole units under the mutex, the TX task drains it into the transport. */
@@ -86,6 +89,7 @@ static void transport_set_baud(uint32_t baud)
     ESP_LOGI(TAG, "baud %lu (real %lu)", (unsigned long)baud, (unsigned long)real);
 #endif
     s_baud = baud;
+    s_switched_us = esp_timer_get_time();
 }
 
 static void transport_init(void)
@@ -191,6 +195,7 @@ static void tx_task(void *arg)
                 continue;
             }
             stalls = 0;
+            portinfo_tx_bytes(0, (size_t)w);
             xSemaphoreTake(s_rmux, portMAX_DELAY);
             s_tail = (s_tail + (size_t)w) % TX_RING;
             xSemaphoreGive(s_rmux);
@@ -215,23 +220,26 @@ static void on_frame(void *ctx, uint8_t type, const uint8_t *p, size_t n)
 static void on_sbp(void *ctx, const sbp_frame_t *f)
 {
     (void)ctx;
-    if (s_proto != LINK_PROTO_SLIP && s_on_sbp)
-        s_on_sbp(f); /* the handler locks the link to SBP when the frame is for us */
+    (void)f; /* counted only (link statistics): frames for the module arrive through relay.c */
 }
 
+/* X1 goes through the relay's framer like X2, whether line 0 bridges or not: frames for the module (and
+ * discovery) are taken there from any line, and the port statistics see every unit. Only an IP bridge
+ * host (SLIP, X1 only) bypasses it. */
 static void feed(const uint8_t *buf, size_t n)
 {
-    if (relay_active()) {
-        relay_uart_bytes(buf, n); /* whole frames: ours to the manager, the rest to the boat */
-        return;
+    portinfo_rx_bytes(0, n);
+    if (s_proto != LINK_PROTO_SLIP) {
+        sbp_dec_feed(&s_sbp, buf, n, on_sbp, NULL);
+        relay_uart_bytes(buf, n);
     }
-    frame_dec_feed(&s_dec, buf, n, on_frame, NULL);
-    sbp_dec_feed(&s_sbp, buf, n, on_sbp, NULL);
+    if (s_proto != LINK_PROTO_SBP && !relay_active())
+        frame_dec_feed(&s_dec, buf, n, on_frame, NULL);
 }
 
 static void idle(bool long_idle)
 {
-    if (relay_active())
+    if (s_proto != LINK_PROTO_SLIP)
         relay_uart_idle(long_idle);
 }
 
@@ -279,11 +287,10 @@ static void rx_task(void *arg)
 
 /* ---- public ------------------------------------------------------------------------------------- */
 
-void link_start(link_rx_handler_t on_ip, link_rx_handler_t on_ctl, link_sbp_handler_t on_sbp)
+void link_start(link_rx_handler_t on_ip, link_rx_handler_t on_ctl)
 {
     s_on_ip = on_ip;
     s_on_ctl = on_ctl;
-    s_on_sbp = on_sbp;
     frame_dec_init(&s_dec, s_decbuf, sizeof s_decbuf);
     sbp_dec_init(&s_sbp);
     s_ring = malloc(TX_RING);
@@ -347,6 +354,11 @@ bool link_set_baud(uint32_t baud)
 uint32_t link_baud(void)
 {
     return s_pending_baud ? s_pending_baud : s_baud;
+}
+
+int64_t link_baud_switched_us(void)
+{
+    return s_pending_baud ? 0 : s_switched_us;
 }
 
 void link_get_stats(link_stats_t *out)
