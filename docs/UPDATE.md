@@ -117,7 +117,9 @@ reboots every ~10 s ([RELAY.md](RELAY.md)).
 without the password, address/DHCP, both lines, own address, both port rates, radio, saved networks) as JSON; with
 `--compare` it checks a later reading against it and prints "SETTINGS KEPT" (exit code 0) or each change. A module
 that was connected must also be back on the same network within `--wait` seconds. Only the module (board 87) is taken
-as the answer to discovery: a relaying line carries discovery to the devices behind the network too.
+as the answer to discovery: a relaying line carries discovery to the devices behind the network too. A setting without
+an answer is asked again twice; one still unread makes the reading incomplete (exit code 2, so an update script does not
+go on), and in a comparison it is "not proven", never "changed".
 
 ```
 python tools/module_state.py --port /dev/ttyUSB0 --baud 921600 > before.json

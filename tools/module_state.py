@@ -8,6 +8,8 @@ Settings (compared): role, access point (the password is never read back), addre
 address, both port rates, radio, saved networks. Runtime (not compared): firmware version, Wi-Fi state and network,
 link report. With --compare a module that was connected before is given --wait seconds to connect again, and the
 network must be the same one. The module is found with discovery, so the address need not be known.
+A setting without an answer is asked again (twice); one still unread makes the reading incomplete: exit code 2 without
+--compare (a script must not go on), and with --compare it counts as not proven, never as "changed".
 """
 import argparse
 import json
@@ -42,23 +44,39 @@ def find_module(d, tries=20):
     return None, None
 
 
+def retry(fn, tries=3):
+    """A reading asked again when no answer came: on a busy relaying port an answer can go missing."""
+    for _ in range(tries):
+        v = fn()
+        if v is not None:
+            return v
+        time.sleep(0.2)
+    return None
+
+
+def saved_networks(d):
+    frames = get_all(d, SB.ID_WIFI, 4, b'')
+    if not frames:
+        return None  # no answer at all: an empty list is answered too, with {0, 0}
+    return [s['ssid'] for s in (SB.parse_saved(f.payload) for f in frames) if 'ssid' in s]
+
+
 def read(d, tries=20):
     route, v2 = find_module(d, tries)
     if route is None:
         return None
     d.route = route
     settings = dict(
-        role=(one(d, SB.ID_WIFI_NET, 0, SB.parse_role) or {}).get('saved'),
-        ap=one(d, SB.ID_WIFI_NET, 1, SB.parse_ap),
-        ipcfg=one(d, SB.ID_WIFI_NET, 2, SB.parse_ipcfg),
-        line0=line_rec(d, 0),
-        line1=line_rec(d, 1),
+        role=retry(lambda: (one(d, SB.ID_WIFI_NET, 0, SB.parse_role) or {}).get('saved')),
+        ap=retry(lambda: one(d, SB.ID_WIFI_NET, 1, SB.parse_ap)),
+        ipcfg=retry(lambda: one(d, SB.ID_WIFI_NET, 2, SB.parse_ipcfg)),
+        line0=retry(lambda: line_rec(d, 0)),
+        line1=retry(lambda: line_rec(d, 1)),
         address=route,
-        x1_baud=uart_rate(d),
-        x2_baud=(page0(d, 1) or {}).get('baud'),
-        radio=one(d, SB.ID_WIFI, 7, SB.parse_radio),
-        saved_networks=[s['ssid'] for s in (SB.parse_saved(f.payload) for f in get_all(d, SB.ID_WIFI, 4, b''))
-                        if 'ssid' in s])
+        x1_baud=retry(lambda: uart_rate(d)),
+        x2_baud=retry(lambda: (page0(d, 1) or {}).get('baud')),
+        radio=retry(lambda: one(d, SB.ID_WIFI, 7, SB.parse_radio)),
+        saved_networks=retry(lambda: saved_networks(d)))
     if settings['radio']:  # what the driver holds now is runtime
         settings['radio'] = {k: settings['radio'][k] for k in ('power_dbm', 'mode', 'bw', 'ps')}
     st = one(d, SB.ID_WIFI, 0, SB.parse_status)
@@ -81,13 +99,24 @@ def main():
     if now is None:
         print('no answer from the module (board 87) to discovery at %d baud' % a.baud)
         return 1
+    missing = [k for k, v in now['settings'].items() if v is None]
     if not a.compare:
         print(json.dumps(now, indent=1))
+        if missing:
+            print('INCOMPLETE, no answer for: %s' % ', '.join(missing), file=sys.stderr)
+            return 2
         return 0
     before = json.load(open(a.compare, encoding='utf-8'))
-    diff = [k for k in before['settings'] if before['settings'][k] != now['settings'].get(k)]
+    unread = [k for k, v in before['settings'].items() if v is None]
+    for k in unread:
+        print('NOT READ BEFORE %s' % k)
+    for k in missing:
+        print('NOT READ NOW %s' % k)
+    diff = [k for k in before['settings'] if k not in unread and k not in missing
+            and before['settings'][k] != now['settings'].get(k)]
     for k in diff:
         print('CHANGED %s: %s -> %s' % (k, before['settings'][k], now['settings'].get(k)))
+    diff += unread + missing
     was = before['runtime']
     if was.get('state') == 'CONNECTED':
         end = time.time() + a.wait
@@ -101,7 +130,9 @@ def main():
             diff.append('wifi')
     print('firmware %s -> %s' % (was.get('firmware'), now['runtime']['firmware']))
     print(json.dumps(now, indent=1))
-    print('SETTINGS KEPT' if not diff else 'SETTINGS DIFFER: %s' % ', '.join(diff))
+    real = [k for k in diff if k not in unread and k not in missing]
+    print('SETTINGS KEPT' if not diff else
+          ('SETTINGS DIFFER: %s' if real else 'SETTINGS NOT PROVEN (not read): %s') % ', '.join(diff))
     return 1 if diff else 0
 
 

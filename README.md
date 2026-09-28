@@ -36,7 +36,7 @@ UDP. On the same port the module answers its own SBP address 87 and sends its Wi
 In the access‑point role the same board can be the boat‑side end: it bridges a sonar or autopilot
 UART to phones and laptops on its own network.
 
-## Key figures (firmware 0.11.0)
+## Key figures (firmware 0.14.0)
 
 | | |
 |---|---|
@@ -48,7 +48,8 @@ UART to phones and laptops on its own network.
 | Relay | per line: off, UDP (fixed peer, last ≤ 4 senders, or broadcast) or TCP client; frames up to 4096 B |
 | Control | Kogger SBP: `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 and the common device IDs, from any line or the network |
 | Update | over SBP on a wired line; A/B slots of 1.875 MiB; SHA‑256 check; confirmation after 60 s, rollback at 180 s |
-| Image size | 0.94 MB, 48 % of a slot (0.12.0, UART build) |
+| Factory settings | station knowing the network `KoggerBridge` (build options `WB_FACTORY_SSID` / `WB_FACTORY_PASS`), lines relaying to 10.0.0.10:14444 / 14445; BOOT held 5 s resets the port rates, 10 s every setting |
+| Image size | 0.95 MB, 48 % of a slot (0.14.0, UART build) |
 | Serial throughput | baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud |
 
 The serial line, not Wi‑Fi, is the bottleneck at these rates. Measured figures, test conditions and charts
@@ -97,7 +98,7 @@ Flashing, the native‑USB variant and the bench checks are described in
 
 ## Status
 
-- **Verified on hardware (0.1–0.12):**
+- **Verified on hardware (0.1–0.14):**
   - SBP device checks;
   - baud rates 9600 to 2 Mbaud on a bench adapter, 2/3/4 Mbaud on a head unit's UART;
   - IP bridge through NAT;
@@ -107,8 +108,15 @@ Flashing, the native‑USB variant and the bench checks are described in
   - 0.11.0 installed on a head unit's module over SBP at 3 Mbaud (7/7 checks), all settings kept;
   - 0.12.0 on a bench module: the port rules (29/29 checks in both roles), the SBP device checks (38/38);
   - 0.12.0 on the head unit's module (7/7); a sonar on the access point's X2 seen on the head unit over an LR‑only
-    module‑to‑module link.
-- **Not yet verified on hardware:** the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
+    module‑to‑module link;
+  - 0.13.0 on a bench module: both BOOT resets (5 s: only the port rates; 10 s: factory settings), the factory station
+    lines, a module set up under an earlier firmware keeping its X2 rate and access point after the update, both ports
+    accepting 5 000 000 baud;
+  - 0.13.0 and 0.14.0 on the head unit's module (7/7 each), every saved setting read before and compared after
+    (`tools/module_state.py`);
+  - 0.14.0: 60 requests at once all answered (58 on 0.13), a mixed burst of ten request types answered in full.
+- **Not yet verified on hardware:** data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
+  module updated from 0.12; two factory modules relaying to each other; the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
 
 The status of each release is in [CHANGELOG.md](CHANGELOG.md).
 

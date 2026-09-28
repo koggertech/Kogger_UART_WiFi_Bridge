@@ -1,7 +1,8 @@
 # The module as a Kogger SBP device
 
-Contract version 4 (firmware 0.12.0; version 3 = 0.11.0, version 2 = 0.10.0, version 1 = 0.2.0). Changes are
-summarised at the end of §3 and §4. Implementation: `firmware/main/sbp.c`, `sbpdev.c`, `manager.c`, `netctl.c`,
+Contract version 5 (firmware 0.14.0: rates up to 5 000 000 baud since 0.13, `ID_WIFI` v1 of 27 bytes; version 4 =
+0.12.0, version 3 = 0.11.0, version 2 = 0.10.0, version 1 = 0.2.0). Changes are summarised at the end of §3 and §4
+and in [CHANGELOG.md](../CHANGELOG.md). Implementation: `firmware/main/sbp.c`, `sbpdev.c`, `manager.c`, `netctl.c`,
 `ports.c`, `portinfo.c`. Python helpers (framing and most payloads): `host/sbpframe.py`. Bench checks:
 `tools/bench_sbp.py`, `tools/bench_ports.py`.
 
