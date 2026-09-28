@@ -3,6 +3,33 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.13.0 — 2026‑09‑28
+
+- **Both ports up to 5 000 000 baud** (was 4 000 000): `ID_UART` v0, `ID_WIFI_NET` v3 and the text `BAUD`. 5 Mbaud is
+  the ESP32‑C3 UART limit and comes exactly from its 80 MHz clock.
+- The receive FIFO interrupts at 64 of 128 bytes instead of 120 on both UARTs, so at 5 Mbaud the interrupt has ~128 µs
+  instead of ~16 µs before the FIFO overflows.
+- **Resets with the BOOT button** while the firmware runs: held 5 s (the LED blinks slowly) the saved port rates return
+  to 921600 and nothing else changes; held 10 s (fast blink) every setting returns to the factory one. The module
+  restarts and resets before it reads any setting. Shorter presses do nothing, and so does the button while a fresh
+  update is still unconfirmed ([docs/HARDWARE.md](docs/HARDWARE.md#resets-with-the-boot-button-013)).
+- **New factory settings:** the station knows the factory network `KoggerBridge` / `KoggerBridge` (build options
+  `WB_FACTORY_SSID`, `WB_FACTORY_PASS`), and the access point role's own network has the same name and password (were
+  `Kogger-XXXX` / `kogger1234`); the station's lines relay to the access point's default address, X1 to
+  10.0.0.10:14444 and X2 to 10.0.0.10:14445 (were off); X2's rate is 921600 like X1's (was 115200). Two factory
+  modules, one of them switched to the access point role, link X1 to X1 and X2 to X2.
+- A module an earlier firmware has set up keeps what it ran with after the update: X2 at 115200, the access point
+  `Kogger-XXXX` / `kogger1234` and the station's lines off, unless they were set; the full reset brings the new ones.
+- On factory settings X1 speaks SBP only (line 0 relays): the IP bridge (SLIP) needs line 0 switched off first, and
+  `tools/bench_flash.py` checks such a board over SBP.
+
+Builds (UART and USB) without warnings; PC tests 63/63. Verified on the bench: update 7/7, port checks 27/27 (also with
+the station's factory lines on), both resets (5 s: X1 460800 and X2 115200 back to 921600, nothing else changed; 10 s:
+factory settings), a module set up under an earlier firmware keeping X2 at 115200 and its access point name, the
+factory station lines (UDP to 10.0.0.10:14444 / 14445), the SBP smoke test of `bench_flash.py`. Not verified on
+hardware: 5 Mbaud itself (the bench adapter stops at 2 Mbaud), the kept station lines on a module updated from 0.12,
+two factory modules relaying to each other.
+
 ## 0.12.0 — 2026‑09‑27
 
 The two ports become equal, and the module tells what is on each of them. Builds (UART and USB) without warnings; PC

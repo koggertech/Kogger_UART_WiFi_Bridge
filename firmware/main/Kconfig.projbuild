@@ -65,6 +65,21 @@ menu "HeadUnit Wi-Fi bridge"
         help
             Builds an image that must be rolled back. Used by tools/sbp_update.py --expect-rollback.
 
+    config WB_FACTORY_SSID
+        string "Factory Wi-Fi network name (1-32 bytes)"
+        default "KoggerBridge"
+        help
+            The network a module with factory settings joins as a station, and the name of its own network
+            in the access point role. Both apply until a network list or access point settings are saved,
+            and again after the full reset with the BOOT button (docs/HARDWARE.md). Public: it is in every
+            image built with it.
+
+    config WB_FACTORY_PASS
+        string "Factory Wi-Fi password (WPA2, 8-63 characters)"
+        default "KoggerBridge"
+        help
+            Password of the factory network (WB_FACTORY_SSID) in both roles. Public, like the name.
+
     config WB_HOSTNAME
         string "DHCP hostname of the Wi-Fi station"
         default "headunit-wifi"

@@ -123,7 +123,8 @@ def find_compiler():
 def build(tmp):
     kind, tool = find_compiler()
     srcs = [os.path.join(ROOT, 'tests', 'c_harness.c')] + [os.path.join(FW, f) for f in
-                                                          ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c', 'portinfo.c')]
+                                                          ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c', 'portinfo.c',
+                                                           'bootkey.c')]
     exe = os.path.join(tmp, 'c_harness.exe' if os.name == 'nt' else 'c_harness')
     if kind == 'gcc':
         cmd = [tool, '-std=c99', '-O2', '-Wall', '-Wextra', '-Werror', '-I', FW, '-o', exe] + srcs
@@ -445,6 +446,37 @@ def relay_tests(run, tmp):
             check('%s: frames > 512 B cut into 512-byte packets that add up to the frame' % tag, ok)
 
 
+def bootkey_tests(exe):
+    """BOOT button poll step (firmware/main/bootkey.c), 50 ms per poll: 100 polls down = 5 s, 200 = 10 s."""
+    def run(seq):
+        return subprocess.run([exe, 'bootkey', seq], stdout=subprocess.PIPE, text=True).stdout.strip()
+
+    out = run('u' + 'd' * 99 + 'uu')
+    check('bootkey: 4.95 s press does nothing, LED untouched', out == '.' * 102, out[-5:])
+    out = run('u' + 'd' * 100 + 'uu')
+    check('bootkey: 5 s press arms the rate reset (LED on) and asks for it on release', out == '.' * 100 + '**r', out[-5:])
+    out = run('u' + 'd' * 199 + 'uu')
+    check('bootkey: 9.95 s press is still the rate reset', out.endswith('r') and 'R' not in out, out[-5:])
+    out = run('u' + 'd' * 200 + 'uu')
+    check('bootkey: 10 s press arms the full reset and asks for it on release', out.endswith('**R') and 'r' not in out,
+          out[-5:])
+    out = run('u' + 'd' * 120)
+    check('bootkey: rate reset armed: LED 250 ms on / 250 ms off', out.endswith('*' * 5 + '-' * 5 + '*' * 5 + '-' * 5 + '*'),
+          out[-21:])
+    out = run('u' + 'd' * 210)
+    check('bootkey: full reset armed: LED 100 ms on / 100 ms off', out.endswith('**--**--**-'), out[-11:])
+    out = run('u' + 'd' * 150 + 'u' + 'd' * 10 + 'uu')
+    check('bootkey: one released poll while armed is bounce, not a release', out.count('r') == 1 and out.endswith('r'))
+    out = run('u' + 'd' * 60 + 'u' + 'd' * 40 + 'uu')
+    check('bootkey: a bounce before 5 s does not restart the count', out.endswith('**r'), out[-5:])
+    out = run('u' + 'd' * 90 + 'uu' + 'd' * 90 + 'uu')
+    check('bootkey: a real release restarts the count', out == '.' * len(out))
+    out = run('d' * 300 + 'uu')
+    check('bootkey: down since polling started is ignored', out == '.' * len(out))
+    out = run('d' * 50 + 'u' + 'd' * 200 + 'uu')
+    check('bootkey: after that a real press works', out.endswith('**R'), out[-5:])
+
+
 def portinfo_tests(exe):
     """ID_WIFI_NET v7 pages built by firmware/main/portinfo.c, read with host/sbpframe.parse_port."""
     def run(script):
@@ -521,6 +553,7 @@ def main():
         if exe:
             c_tests(exe, tmp)
             portinfo_tests(exe)
+            bootkey_tests(exe)
     failed = [n for n, ok in results if not ok]
     print(NL + '%d checks, %d failed' % (len(results), len(failed)))
     sys.exit(1 if failed else 0)

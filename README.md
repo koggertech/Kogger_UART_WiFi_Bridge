@@ -44,7 +44,7 @@ UART to phones and laptops on its own network.
 | Board | 20 × 30 mm, 4 layers; two JST GH 4‑pin connectors; supply 4.5–24 V on X1 (3.3 V / 1 A step‑down module) |
 | Wi‑Fi | 802.11 b/g/n, 2.4 GHz, 20/40 MHz; Espressif LR mode optional; TX power 2–20 dBm in 11 steps |
 | Roles | station (default) or access point (open, WPA2, WPA2/WPA3; channels 1–11; up to 10 clients) |
-| Serial lines | X1 = UART0, X2 = UART1, equal for control and relay; 9600–4 000 000 baud, 8N1, set for each port; defaults 921600 and 115200 |
+| Serial lines | X1 = UART0, X2 = UART1, equal for control and relay; 9600–5 000 000 baud, 8N1, set for each port; default 921600 on both |
 | Relay | per line: off, UDP (fixed peer, last ≤ 4 senders, or broadcast) or TCP client; frames up to 4096 B |
 | Control | Kogger SBP: `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 and the common device IDs, from any line or the network |
 | Update | over SBP on a wired line; A/B slots of 1.875 MiB; SHA‑256 check; confirmation after 60 s, rollback at 180 s |

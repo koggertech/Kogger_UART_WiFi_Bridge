@@ -33,9 +33,12 @@ The contract is in [SBP_WIFI.md](SBP_WIFI.md) §4 and the relay buffers in [RELA
 - In the AP role there is no station. Scan, connect, and the v4 actions "disconnect" and "auto‑connect" answer
   ERR_RUNTIME. The list of saved networks is kept for the return to the station role.
 
-**Access point defaults:** name `Kogger-XXXX` (XXXX = last two bytes of the AP's MAC), WPA2, password `kogger1234`,
-channel 6, up to 4 clients, name visible. **The default password is public: change it when you first set up an access
-point** ([SECURITY.md](../SECURITY.md)). The password is never read back.
+**Access point defaults:** the factory network (0.13): name `KoggerBridge`, WPA2, password `KoggerBridge` (build
+options `WB_FACTORY_SSID` / `WB_FACTORY_PASS`), channel 6, up to 4 clients, name visible. A station on factory settings
+knows the same network, so it joins such an access point by itself. Before 0.13 the defaults were `Kogger-XXXX` (last
+two bytes of the AP's MAC) / `kogger1234`, and a module set up under an earlier firmware keeps them. **The default
+password is public: change it when you first set up an access point** ([SECURITY.md](../SECURITY.md)). The password
+is never read back.
 
 **Channel 1–11** (0.11; 0.10 accepted 1–13).
 - The driver's default country ("01", channels 1–11) always applies to an access point, and the driver refuses an AP
@@ -87,16 +90,19 @@ Each line maps to its own UDP port or to a TCP client:
 | dest (UDP) | **fixed**: to ip:rport. **senders**: to whoever sent to the local port, up to 4 senders, each forgotten after 60 s of silence. **broadcast**: to the subnet broadcast address on rport |
 | ip, rport | peer for fixed and TCP |
 | lport | local UDP port; 0 = same as rport |
-| baud | line 1 only (line 0's rate is set by `ID_UART`), 9600 … 4 000 000 |
+| baud | the other line's rate (the asking port's own: `ID_UART` v0), 9600 … 5 000 000 |
 | TX/RX pins | line 1 only; −1 = UART1 off |
 
 **Defaults:**
 
 | Role | Line 0 (X1) | Line 1 (X2) | Own SBP address |
 |---|---|---|---|
-| station | off; when enabled: UDP senders 14444, 921600 | off; when enabled: UDP senders 14445, 115200, pins 5/4 | 87 |
+| station | UDP to 10.0.0.10:14444, 921600 | UDP to 10.0.0.10:14445, 921600, pins 5/4 | 87 |
 | access point | UDP senders, port 14444 | UDP senders, port 14445 | 88 |
 
+- The station's lines relay by default from 0.13, to the access point's default address, so two factory modules
+  link X1 to X1 and X2 to X2. A module set up under an earlier firmware keeps them off until the full reset with the
+  BOOT button: its X1 may carry the IP bridge (SLIP), which a relaying line 0 ends.
 - A role's defaults apply while a line has not been saved. Saved lines are shared by both roles. The "forget lines"
   flag of a role change erases them together with the address, and the new role starts from its defaults. The saved
   rates of X1 and X2 are port settings and stay (0.12).
@@ -180,9 +186,10 @@ been checked.
 
 ## 8. Open questions
 
-1. The AP defaults (`Kogger-XXXX` / `kogger1234`) are placeholders. They can be changed at any time
-   (`ID_WIFI_NET` v1). For a product, see [SECURITY.md](../SECURITY.md).
-2. The LED on GPIO0 is unused. It could show role, link and traffic.
+1. The factory network `KoggerBridge` / `KoggerBridge` is public: a module on factory settings joins any network of
+   that name and password and relays its lines there. Change it at setup, or build with other `WB_FACTORY_SSID` /
+   `WB_FACTORY_PASS` ([SECURITY.md](../SECURITY.md)).
+2. The LED on GPIO0 shows only an armed BOOT reset (0.13). It could also show role, link and traffic.
 3. TCP: a packet may wait up to 5 s for window space. One shared send task can then hold the other line's packets for
    as long. UDP is not affected.
 4. Changing protocols and bandwidth in the AP role restarts the AP. The driver settings are assumed to survive

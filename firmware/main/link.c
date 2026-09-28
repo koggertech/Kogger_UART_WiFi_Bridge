@@ -117,6 +117,9 @@ static void transport_init(void)
     ESP_ERROR_CHECK(uart_param_config(CONFIG_WB_LINK_UART_NUM, &cfg));
     ESP_ERROR_CHECK(uart_set_pin(CONFIG_WB_LINK_UART_NUM, CONFIG_WB_LINK_UART_TX, CONFIG_WB_LINK_UART_RX,
                                  CONFIG_WB_LINK_UART_RTS, CONFIG_WB_LINK_UART_CTS));
+    /* RX FIFO interrupt at 64 of 128 bytes instead of the default 120: at 5 Mbaud the default left 16 us for
+     * the ISR, less than a Wi-Fi interrupt can take (no measurement; the counter is rx_overflows). */
+    uart_set_rx_full_threshold(CONFIG_WB_LINK_UART_NUM, 64);
     gpio_pullup_en(CONFIG_WB_LINK_UART_RX); /* an unplugged connector idles high instead of floating */
     s_baud = CONFIG_WB_LINK_UART_BAUD;
     ESP_LOGI(TAG, "transport: UART%d @ %d baud", CONFIG_WB_LINK_UART_NUM, CONFIG_WB_LINK_UART_BAUD);

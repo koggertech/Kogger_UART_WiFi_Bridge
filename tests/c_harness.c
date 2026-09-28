@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bootkey.h"
 #include "frame.h"
 #include "kframe.h"
 #include "kpack.h"
@@ -106,6 +107,16 @@ int main(int argc, char **argv)
 {
     static uint8_t buf[FRAME_ENCODED_MAX(FRAME_MAX_PAYLOAD)];
     static uint8_t pl[FRAME_MAX_PAYLOAD];
+    if (argc >= 3 && !strcmp(argv[1], "bootkey")) { /* argv[2]: one poll per char, d = down */
+        bootkey_t k = {0};
+        for (const char *p = argv[2]; *p; p++) {
+            bootkey_act_t a = bootkey_step(&k, *p == 'd');
+            putchar(a == BOOTKEY_RESET_ALL ? 'R' : a == BOOTKEY_RESET_RATES ? 'r' : a == BOOTKEY_LED_ON ? '*'
+                    : a == BOOTKEY_LED_DARK ? '-' : '.');
+        }
+        putchar('\n');
+        return 0;
+    }
     if (argc >= 2 && !strcmp(argv[1], "portinfo")) {
         static uint8_t fb[4][2][1024];
         static kf_t kf[4]; /* up X1, up X2, down X1, down X2 */

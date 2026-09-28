@@ -51,8 +51,9 @@ network ([NETWORK.md](NETWORK.md) §5).
   - v2, 9 bytes: `bootMode (0 firmware, 1 while the update window or a transfer is open), boardMinor 0, board 87, 0, 0,
     U2 0, fwMinor, fwMajor`.
 - **`ID_UART` (0x18)**, KoggerApp's `IDBinUART` layout. SET v0 `{KEY 0xC96B5D4A, U1 1, U4 baud}`.
-  - Any rate from 9600 to 4 000 000 is accepted, including all standard ones (9600 … 921600, 1 000 000, 1 200 000,
-    1 500 000, 2 000 000, 2 500 000, 3 000 000, 3 500 000, 4 000 000).
+  - Any rate from 9600 to 5 000 000 is accepted on either port (0.13; 4 000 000 before), including all standard ones
+    (9600 … 921600, 1 000 000, 1 200 000, 1 500 000, 2 000 000, 2 500 000, 3 000 000, 3 500 000, 4 000 000, 5 000 000).
+    5 000 000 is the ESP32‑C3 UART limit and exact from its 80 MHz clock (divider 16); it has not been run on hardware.
   - v0 refers to the port behind the request: the UART it came through, or, for a network sender, the UART of the
     line whose UDP port received it. The `uart` byte is ignored (KoggerApp always sends 1).
   - The acknowledgement goes out at the old rate, then the port switches.
@@ -61,7 +62,8 @@ network ([NETWORK.md](NETWORK.md) §5).
     or with `ID_FLASH` v0. Without one within **10 s** the port returns to its previous rate. A change asked from the
     network is saved at once. So a host that switches its own port and keeps talking never loses the module, and a host
     that cannot follow the new rate gets it back.
-  - Default rates: X1 921600 (on KoggerApp's auto‑detect list), X2 115200.
+  - Default rates: 921600 on both ports (on KoggerApp's auto‑detect list). X2's was 115200 before 0.13; a module set
+    up under an earlier firmware keeps 115200 on X2 after the update, a new or factory‑reset one takes 921600.
   - GET: v0 → `{KEY, 1, baud}` of that port, v1 → `{KEY, 1, address}`, v2 → `{KEY, address}`. SET v1
     `{KEY, U1 1, U1 address}` and v2 `{KEY, U1 address}` both set the module's own address (saved at once, the same
     as `ID_WIFI_NET` v6); 0 and 255 → ERR_PAYLOAD. The acknowledgement comes from the old address.
@@ -69,7 +71,7 @@ network ([NETWORK.md](NETWORK.md) §5).
     lines" flag of a role change keeps them.
 - **`ID_MARK` (0x21):** SET v0 `{KEY}`; GET v0 → `{U1 mark}`.
 - **`ID_FLASH` (0x23):** SET `{KEY}`. v0 confirms and saves the current rates of both ports and the report period; v1
-  reloads the saved report period (saved rates apply at the next boot); v2 erases the saved rates (X1 921600, X2 115200
+  reloads the saved report period (saved rates apply at the next boot); v2 erases the saved rates (both 921600
   at the next boot) and the report period.
 - **`ID_BOOT` (0x24):** SET v0 `{KEY}` reboots the module after a 5 s update window.
   - A reboot brings back the **saved** rates.
@@ -330,7 +332,8 @@ carries SBP only.
   `* STATE` on changes). KoggerApp's parser skips those bytes as noise.
 - In the AP role (0.11) no text is sent before the host locks SLIP, because a device may sit on X1.
 - The text command `PROTO link=sbp` switches SLIP → SBP without a reboot.
-- While line 0 bridges (0.7+), the port is locked to SBP from the start.
+- While line 0 bridges (0.7+), the port is locked to SBP from the start. On factory settings (0.13) it bridges in
+  either role, so the IP bridge needs line 0 switched off first.
 
 ## 6. ID choice
 

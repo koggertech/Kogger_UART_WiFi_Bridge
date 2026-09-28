@@ -46,13 +46,35 @@ the reverse‑polarity diode.
 
 | Part | Connection | Use |
 |---|---|---|
-| LED VD1 (green) | GPIO0 → 1 kΩ → LED → GND, lit when high | not used by the firmware yet |
-| Button SB1 | GPIO9 to GND, 10 kΩ pull‑up | held at power‑up: ROM download mode |
+| LED VD1 (green) | GPIO0 → 1 kΩ → LED → GND, lit when high | blinks while a reset with the BOOT button is armed (below), otherwise off |
+| Button SB1 | GPIO9 to GND, 10 kΩ pull‑up | held at power‑up: ROM download mode; held 5 s / 10 s while the firmware runs: resets (below) |
 | Pull‑ups 10 kΩ | GPIO2, GPIO8 | strapping pins for a normal boot |
 | EN | 10 kΩ pull‑up, 1 µF to GND | power‑on reset delay |
 | Test pads, bottom | TP1 DM (GPIO18), TP2 DP (GPIO19), TP3 TX / TP4 RX of line 1 | USB Serial/JTAG flashing, line 1 probing |
 
 There is no reset button and no auto‑reset circuit (DTR/RTS). The module resets when its supply is removed for 1–2 s.
+
+## Resets with the BOOT button (0.13)
+
+With the firmware running, hold BOOT (SB1), then release it:
+
+| Held | LED | On release |
+|---|---|---|
+| under 5 s | — | nothing |
+| 5 … 10 s | blinks slowly, 250 ms on / 250 ms off | the saved port rates are erased: X1 and X2 at 921600; nothing else changes |
+| 10 s or more | blinks fast, 100 ms on / 100 ms off | every setting is erased: the factory settings below |
+
+Either way the module restarts and resets before it reads any setting. Factory settings: Wi‑Fi station whose saved network is the factory network `KoggerBridge`, password `KoggerBridge` (build options
+`WB_FACTORY_SSID` / `WB_FACTORY_PASS`); in the access point role the module's own network has the same name and
+password. Line 0 (X1) relays to UDP 10.0.0.10:14444 and line 1 (X2) to 10.0.0.10:14445, the access point's default
+address; both ports at 921600 baud; own address 87. A module switched to the access point role with factory settings
+listens on the same ports, so two factory modules link X1 to X1 and X2 to X2.
+
+- A press shorter than 5 s does nothing, and neither does a button that is already down when the firmware starts.
+- Until a freshly updated image has confirmed itself ([UPDATE.md](UPDATE.md)) the button does nothing: a restart then
+  would roll the update back.
+- If line 1 has been moved onto GPIO0 the LED stays dark; the resets still work.
+- Held while power is applied, BOOT selects the ROM download mode instead (next section).
 
 ## Flashing without auto‑reset
 

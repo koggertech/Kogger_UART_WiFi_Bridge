@@ -8,7 +8,9 @@ Flashing: the chip must be in the ROM bootloader: hold BOOT while applying power
 boards that have one). Everything runs in
 one stub session at 115200, because each esptool call without a reset leaves the stub at its own baud
 rate and the next call cannot find it. After flashing the script keeps the port open at the link baud,
-asks for a reset (power-cycle without BOOT), and checks what the firmware says. Exit code 0 = all checks PASS.
+asks for a reset (power-cycle without BOOT), and checks what the firmware says: over the SLIP text protocol, or
+over SBP when X1 speaks only SBP (0.13: a board on factory settings relays line 0, which locks X1 to SBP from the
+start, so no "* HELLO" comes). Exit code 0 = all checks PASS.
 Needs esptool >= 5 and pyserial.
 """
 import argparse
@@ -111,10 +113,45 @@ def fields(rest):
     return wbframe.parse_fields(rest.split()[1:])
 
 
+def smoke_sbp(port, baud):
+    """X1 locked to SBP (line 0 relays): discovery, identity, link report, and junk must not restart the module."""
+    sys.path.insert(0, os.path.join(ROOT, 'tools'))
+    import sbpframe as SB  # noqa: E402
+    from bench_ports import discover  # noqa: E402
+    from bench_sbp import Dev, get_all  # noqa: E402
+    d = Dev(port, baud)
+    d.pump(0.5)
+    route, v2 = discover(d, 0)
+    if not check('no * HELLO: SBP discovery answered (X1 locked to SBP: line 0 relays)', route is not None,
+             '' if route is not None else 'no answer'):
+        return
+    d.route = route
+    print('      firmware %d.%d, own address %d' % (v2[8], v2[7], route))
+    check('own address 87: station role', route == 87, str(route))
+
+    def link_report():
+        f = get_all(d, SB.ID_WIFI, 1, b'')
+        return SB.parse_link(f[0].payload) if f else None
+    r0 = link_report()
+    check('ID_WIFI v1 link report', r0 is not None, str(r0))
+    d.p.write(b'garbage without delimiters\xbb\x55\x57\x02\xff' + bytes(40) + b'\xc0\x02' + b'1 VER' + b'\x00\x00\xc0')
+    d.pump(1.0)
+    r1 = link_report()
+    check('after junk: still up (uptime did not restart)',
+          r0 is not None and r1 is not None and r1['uptime'] >= r0['uptime'], str(r1))
+    d.p.close()
+
+
 def smoke(port, baud, reset_wait):
     link = Link(port, baud)
     print('port %s open at %d. Reset the module now: power-cycle it WITHOUT BOOT (or press RESET if the board has one) ...' % (port, baud), flush=True)
-    hello = link.wait_line(lambda l: l.startswith('* HELLO'), reset_wait)
+    end = time.monotonic() + reset_wait
+    while link.raw == 0 and time.monotonic() < end: # the ROM banner (garbage at the link rate) marks the reset
+        link.pump()
+    hello = link.wait_line(lambda l: l.startswith('* HELLO'), 5)
+    if hello is None and link.raw:
+        link.p.close()
+        return smoke_sbp(port, baud)
     if not check('* HELLO after reset', hello is not None, hello or 'raw bytes seen: %d' % link.raw):
         return
     st = link.wait_line(lambda l: l.startswith('* STATE'), 5)

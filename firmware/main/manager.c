@@ -17,6 +17,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "sdkconfig.h"
 
 #include "bridge.h"
 #include "frame.h"
@@ -413,18 +414,26 @@ typedef struct {
 static void known_load(void)
 {
     nvs_handle_t h;
-    if (nvs_open("wb", NVS_READONLY, &h) != ESP_OK)
-        return;
     known_blob_t *b = calloc(1, sizeof *b);
     size_t sz = sizeof *b;
-    if (b && nvs_get_blob(h, "known", b, &sz) == ESP_OK && sz == sizeof *b && b->version == 1 && b->n <= MAX_KNOWN) {
+    esp_err_t e = ESP_ERR_NVS_NOT_FOUND; /* no namespace yet: nothing saved */
+    if (nvs_open("wb", NVS_READONLY, &h) == ESP_OK) {
+        e = b ? nvs_get_blob(h, "known", b, &sz) : ESP_ERR_NO_MEM;
+        nvs_close(h);
+    }
+    if (e == ESP_OK && sz == sizeof *b && b->version == 1 && b->n <= MAX_KNOWN) {
         S.nknown = b->n;
         S.seq = b->seq;
         memcpy(S.known, b->e, sizeof S.known);
+    } else if (e == ESP_ERR_NVS_NOT_FOUND) {
+        /* A new or factory-reset module knows the factory network until a list is saved. Forgetting
+         * every network saves an empty list, so the factory one does not come back by itself. */
+        strlcpy(S.known[0].ssid, CONFIG_WB_FACTORY_SSID, sizeof S.known[0].ssid);
+        strlcpy(S.known[0].pass, CONFIG_WB_FACTORY_PASS, sizeof S.known[0].pass);
+        S.nknown = 1;
     }
     free(b);
-    nvs_close(h);
-    ESP_LOGI(TAG, "%d saved network(s)", S.nknown);
+    ESP_LOGI(TAG, "%d saved network(s)%s", S.nknown, e == ESP_ERR_NVS_NOT_FOUND ? ": the factory one" : "");
 }
 
 static void known_save(void)

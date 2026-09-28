@@ -65,6 +65,9 @@ python tools/bench_flash.py --port COM3 --build-dir firmware/build-uart
 python tools/bench_flash.py --port COM3 --no-flash       # smoke test only
 ```
 
+A board on factory settings (0.13) relays line 0, which locks X1 to SBP, so no `* HELLO` comes: the smoke test then
+runs over SBP instead (discovery from address 87, link report, junk that must not restart the module).
+
 By hand, over the text protocol:
 
 ```

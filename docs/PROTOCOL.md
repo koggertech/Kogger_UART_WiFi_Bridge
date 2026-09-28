@@ -3,7 +3,8 @@
 This document covers the IP bridge run by the host daemon `host/espwifi_bridge.py` (SLIP frames). Controlling the
 module directly over Kogger SBP (`ID_WIFI` 0x57, `ID_WIFI_NET` 0x58) is described in [SBP_WIFI.md](SBP_WIFI.md). Both
 protocols share one port, see SBP_WIFI.md §5. While line 0 relays to the network ([RELAY.md](RELAY.md)), the port
-understands only SBP and this protocol is unavailable.
+understands only SBP and this protocol is unavailable. On factory settings (0.13) line 0 relays in either role:
+switch it off first (`ID_WIFI_NET` v3).
 
 The contract covers two links: the ESP32‑C3 module ↔ the host, and the host daemon ↔ applications. Implementations: firmware
 `firmware/main/{frame,proto,manager}.c`, host `host/wbframe.py`, `host/espwifi_bridge.py`. `tests/test_all.py` checks
@@ -59,7 +60,7 @@ Fields are separated by spaces.
 | `LIST` | — | `KNOWN ssid=` for each saved network, `OK count=N` (passwords are never sent) |
 | `FORGET` | `ssid=` | `OK` / `ERR NOT_FOUND`; if it is the current network, disconnect and look for others |
 | `STATS` | — | `OK link_rx= link_crc= link_disc= link_ovf= link_tx= link_txdrop= sbp_rx= sbp_ckerr= ip_in= ip_out= ip_bad= dns= dns_servfail= sta_rx= sta_tx= heap= uptime=` (`sta_*`: bytes of Wi‑Fi interface frames since boot) |
-| `BAUD` | `rate=` 9600…4000000 | `OK`, then the switch (the answer goes out at the old rate); not saved |
+| `BAUD` | `rate=` 9600…5000000 | `OK`, then the switch (the answer goes out at the old rate); not saved |
 | `PROTO` | `link=sbp\|slip` | `OK`; `sbp` switches the port to Kogger SBP until the next reboot |
 | `RADIO` | `power=` 2…21 dBm (above 20 is stored as 20), `mode=b\|bg\|bgn\|lr\|bgnlr`, `bw=20\|40`, `ps=none\|min\|max` (any of them) | no arguments: show; `OK power= mode= bw= ps= power_now= phy= proto_now= bw_now=` (as `ID_WIFI` v7) |
 | `RELAY` | `mode=off\|udp\|tcp addr= ip= port= lport=` (any of them) | no arguments: show; `OK mode= addr= ip= port= lport= state= peer= up_frames= … local=` (line 0, as `ID_WIFI` v5/v6). A bad value → `ERR BAD_ARGS` (0.11). After enabling, the port switches to SBP |

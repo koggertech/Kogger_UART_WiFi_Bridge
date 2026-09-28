@@ -6,7 +6,7 @@
  *     to its previous rate after PORTS_CONFIRM_MS.
  *   - Any other change (the other port, or asked from the network) is saved at once.
  * Saved rates: port 0 in NVS "baud" (the key 0.11 wrote with ID_FLASH, so a rollback keeps it), port 1
- * in its line record. Manager task only, except ports_baud() (any task).
+ * in "baud1" and its line record (netcfg.c). Manager task only, except ports_baud() (any task).
  */
 #pragma once
 
@@ -15,7 +15,6 @@
 
 #define PORTS_N          2
 #define PORTS_CONFIRM_MS 10000
-#define PORTS_DEFAULT1   115200u   /**< X2 after ID_FLASH v2 */
 
 /** After netcfg_load(): read the saved rate of port 0. */
 void ports_load(void);

@@ -70,6 +70,6 @@ uint32_t link_baud(void);
 int64_t link_baud_switched_us(void);
 
 #define LINK_BAUD_MIN 9600u
-#define LINK_BAUD_MAX 4000000u
+#define LINK_BAUD_MAX 5000000u  /* both ports: the ESP32-C3 UART limit, 80 MHz APB / 16 */
 
 void link_get_stats(link_stats_t *out);

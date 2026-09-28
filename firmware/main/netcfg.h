@@ -63,7 +63,7 @@ bool netcfg_set_role(wifi_role_t r);          /**< saved; takes effect after a r
 bool netcfg_forget_lines(void);
 
 void netcfg_ap(ap_cfg_t *c);
-void netcfg_ap_default(ap_cfg_t *c);          /**< Kogger-XXXX, WPA2, documented password, channel 6 */
+void netcfg_ap_default(ap_cfg_t *c);          /**< the factory network (CONFIG_WB_FACTORY_*), WPA2, channel 6 */
 bool netcfg_ap_ok(const ap_cfg_t *c);
 bool netcfg_set_ap(const ap_cfg_t *c);
 
@@ -75,7 +75,10 @@ void netcfg_line(int line, line_cfg_t *c);
 bool netcfg_line_ok(int line, const line_cfg_t *c);
 bool netcfg_set_line(int line, const line_cfg_t *c);
 
-/** Saved rate of X2 (line 1): kept in its own key, survives "forget lines"; erase = back to 115200. */
+/** X2's rate when none is saved: 921600 like X1 (0.13; 115200 before, which modules set up earlier keep). */
+#define NETCFG_BAUD1_DEFAULT 921600u
+
+/** Saved rate of X2 (line 1): kept in its own key, survives "forget lines"; erase = back to the default. */
 bool netcfg_set_baud1(uint32_t baud);
 bool netcfg_erase_baud1(void);
 

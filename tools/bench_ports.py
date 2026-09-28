@@ -2,7 +2,7 @@
 """Bench check of the 0.12 port rules (docs/SBP_WIFI.md) over one serial port of the module (X1 or X2).
 
   python tools/bench_ports.py --port COM3                 # discovery, port information, rates, addresses
-  python tools/bench_ports.py --port COM3 --baud 115200   # the port runs at another rate (X2 default)
+  python tools/bench_ports.py --port COM3 --baud 115200   # the port runs at another rate (X2 of a module set up before 0.13)
   python tools/bench_ports.py --port COM3 --long          # + reports stop 60 s after the last request
 
 The module is found with discovery (GETTING ID_VERSION to route 0), as KoggerApp finds it, so its own

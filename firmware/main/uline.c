@@ -12,6 +12,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
+#include "link.h"
 #include "portinfo.h"
 #include "relay.h"
 
@@ -75,7 +76,7 @@ bool uline_tx_relay(const uint8_t *d, size_t n)
 
 bool uline_set_baud(uint32_t baud)
 {
-    if (!s_run || baud < 9600 || baud > 4000000)
+    if (!s_run || baud < LINK_BAUD_MIN || baud > LINK_BAUD_MAX)
         return false;
     xSemaphoreTake(s_mux, portMAX_DELAY);
     s_mark = s_head;
@@ -177,6 +178,9 @@ bool uline_start(const line_cfg_t *c)
     }
     /* IDF 5.5 no longer pulls a matrix-routed RX pin up: with nothing plugged into X2 the input would
      * float and its noise would be relayed as data. The weak pull-up keeps an open line idle (high). */
+    /* RX FIFO interrupt at 64 of 128 bytes instead of the default 120: at 5 Mbaud the default left 16 us for
+     * the ISR, less than a Wi-Fi interrupt can take (no measurement; the counter is rx_overflows). */
+    uart_set_rx_full_threshold(UNUM, 64);
     gpio_pullup_en(c->rx_pin);
     s_tx_pin = c->tx_pin;
     s_rx_pin = c->rx_pin;

@@ -52,6 +52,11 @@ void ota_init(void)
     ESP_LOGI(TAG, "running %s, state %s", run ? run->label : "?", ota_state_name());
 }
 
+bool ota_pending(void)
+{
+    return s_pending;
+}
+
 uint8_t ota_boot_mode(void)
 {
     return s_st == ST_IDLE ? 0 : 1;

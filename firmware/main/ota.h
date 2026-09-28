@@ -45,6 +45,9 @@ void ota_note_host_frame(void);
 /** Called every 500 ms from the manager task: window/transfer timeouts and self-confirmation. */
 void ota_tick(void);
 
+/** This boot runs a freshly updated image that has not confirmed itself yet (read from any task). */
+bool ota_pending(void);
+
 /** Running slot label and state for diagnostics ("ota_0", "pending"/"valid"/"undefined"). */
 const char *ota_running_label(void);
 const char *ota_state_name(void);

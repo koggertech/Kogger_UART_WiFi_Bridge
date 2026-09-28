@@ -6,19 +6,24 @@
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "nvs.h"
+#include "sdkconfig.h"
+
+#include "link.h"
 
 static const char *TAG = "netcfg";
 
 static wifi_role_t s_role = ROLE_STA, s_saved_role = ROLE_STA;
 static ap_cfg_t s_ap;
-static ip_cfg_t s_ip = { .ip = { 10, 0, 0, 10 }, .mask = { 255, 255, 255, 0 }, .dhcp = 1,
+#define AP_IP_DEFAULT { 10, 0, 0, 10 } /* the access point's own address; a station's lines send to it */
+static ip_cfg_t s_ip = { .ip = AP_IP_DEFAULT, .mask = { 255, 255, 255, 0 }, .dhcp = 1,
                          .pool_start = { 10, 0, 0, 11 }, .pool_end = { 10, 0, 0, 30 }, .lease_min = 120, .offer = 0 };
 /* Line 1 pins: connector X2 of the module board (schematic 2026-09-26: GPIO5 -> R7 -> pin 1 TX,
- * pin 2 -> R11 -> GPIO4 RX). Both lines start switched off in the station role; the access point role
- * turns them on below. The rates here are defaults only: the running rates belong to ports.c. */
+ * pin 2 -> R11 -> GPIO4 RX). Each role turns both lines on below (a module an earlier firmware has run
+ * keeps them off in the station role). The rates here are defaults only: the running rates belong to
+ * ports.c. */
 static line_cfg_t s_line[NLINES] = {
     { .mode = LINE_OFF, .dest = DEST_SENDERS, .rport = 14444, .lport = 14444, .baud = 921600, .tx_pin = 21, .rx_pin = 20 },
-    { .mode = LINE_OFF, .dest = DEST_SENDERS, .rport = 14445, .lport = 14445, .baud = 115200, .tx_pin = 5, .rx_pin = 4 },
+    { .mode = LINE_OFF, .dest = DEST_SENDERS, .rport = 14445, .lport = 14445, .baud = NETCFG_BAUD1_DEFAULT, .tx_pin = 5, .rx_pin = 4 },
 };
 static uint8_t s_addr = 87;
 
@@ -53,16 +58,30 @@ static bool get_blob(nvs_handle_t h, const char *key, void *v, size_t n)
     return nvs_get_blob(h, key, v, &sz) == ESP_OK && sz == n;
 }
 
+/* The factory network is a build option: its limits are checked here, not at the first boot. */
+_Static_assert(sizeof CONFIG_WB_FACTORY_SSID - 1 >= 1 && sizeof CONFIG_WB_FACTORY_SSID - 1 <= 32,
+               "WB_FACTORY_SSID must be 1-32 bytes");
+_Static_assert(sizeof CONFIG_WB_FACTORY_PASS - 1 >= 8 && sizeof CONFIG_WB_FACTORY_PASS - 1 <= 63,
+               "WB_FACTORY_PASS must be 8-63 characters");
+
 void netcfg_ap_default(ap_cfg_t *c)
 {
-    uint8_t mac[6];
     memset(c, 0, sizeof *c);
-    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    snprintf(c->ssid, sizeof c->ssid, "Kogger-%02X%02X", mac[4], mac[5]);
-    strcpy(c->pass, "kogger1234"); /* documented default; to be changed on first setup */
+    strlcpy(c->ssid, CONFIG_WB_FACTORY_SSID, sizeof c->ssid);
+    strlcpy(c->pass, CONFIG_WB_FACTORY_PASS, sizeof c->pass);
     c->channel = 6;
     c->max_clients = 4;
     c->auth = 1;
+}
+
+/* The access point default before 0.13; a module an earlier firmware has run keeps it (netcfg_load). */
+static void ap_default_012(ap_cfg_t *c)
+{
+    uint8_t mac[6];
+    netcfg_ap_default(c);
+    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    snprintf(c->ssid, sizeof c->ssid, "Kogger-%02X%02X", mac[4], mac[5]);
+    strlcpy(c->pass, "kogger1234", sizeof c->pass);
 }
 
 void netcfg_load(void)
@@ -73,6 +92,17 @@ void netcfg_load(void)
     if (nvs_open("wb", NVS_READWRITE, &h) != ESP_OK)
         return;
     uint8_t v;
+    /* Has an earlier firmware run here? Asked before this boot writes anything (see "def13" below). */
+    bool first13 = nvs_get_u8(h, "def13", &v) != ESP_OK;
+    bool older = false;
+    if (first13) {
+        nvs_iterator_t it = NULL;
+        older = nvs_entry_find_in_handle(h, NVS_TYPE_ANY, &it) == ESP_OK;
+        nvs_release_iterator(it);
+        if (older)
+            nvs_set_u8(h, "sta_off", 1); /* committed with "def13" */
+    }
+    bool sta_off = older || nvs_get_u8(h, "sta_off", &v) == ESP_OK;
     if (nvs_get_u8(h, "role", &v) == ESP_OK && v <= ROLE_AP)
         s_role = (wifi_role_t)v;
     s_saved_role = s_role;
@@ -83,7 +113,20 @@ void netcfg_load(void)
         s_line[0].mode = LINE_UDP;
         s_line[1].mode = LINE_UDP;
         s_addr = 88;
+    } else if (!sta_off) {
+        /* A station with nothing saved (0.13): both connectors to the same ports of the access point's
+         * default address, so a factory pair (one module switched to the access point role) links X1 to
+         * X1 and X2 to X2 at once. A module an earlier firmware has run keeps them off ("sta_off"), as
+         * it ran: its X1 may carry the SLIP IP bridge, which a relaying line 0 would end. */
+        static const uint8_t peer[4] = AP_IP_DEFAULT;
+        for (int i = 0; i < NLINES; i++) {
+            s_line[i].mode = LINE_UDP;
+            s_line[i].dest = DEST_FIXED;
+            memcpy(s_line[i].ip, peer, sizeof peer);
+        }
     }
+    size_t asz = 0;
+    bool ap_saved = nvs_get_blob(h, "ap", NULL, &asz) != ESP_ERR_NVS_NOT_FOUND;
     ap_cfg_t ap;
     if (get_blob(h, "ap", &ap, sizeof ap)) {
         if (ap.channel > 11 && ap.channel <= 13)
@@ -96,12 +139,15 @@ void netcfg_load(void)
         s_ip = ip;
     if (nvs_get_u8(h, "maddr", &v) == ESP_OK && v != 0 && v != 255)
         s_addr = v; /* 0.11 let 255 through; it is the broadcast route now: the role's default instead */
+    bool rec1 = false;
     for (int i = 0; i < NLINES; i++) {
         line_cfg_t l;
         char key[8];
         snprintf(key, sizeof key, "line%d", i);
         size_t sz = 0;
         bool saved = nvs_get_blob(h, key, NULL, &sz) != ESP_ERR_NVS_NOT_FOUND;
+        if (i == 1)
+            rec1 = saved;
         if (get_blob(h, key, &l, sizeof l) && line_ok_self(i, &l)) {
             s_line[i] = l;
         } else if (saved) {
@@ -128,8 +174,30 @@ void netcfg_load(void)
     }
     /* X2's saved rate is a port setting: kept apart from the line record, so "forget lines" keeps it */
     uint32_t b1;
-    if (nvs_get_u32(h, "baud1", &b1) == ESP_OK && b1 >= 9600 && b1 <= 4000000)
+    bool b1_saved = nvs_get_u32(h, "baud1", &b1) == ESP_OK;
+    if (b1_saved && b1 >= LINK_BAUD_MIN && b1 <= LINK_BAUD_MAX)
         s_line[1].baud = b1;
+    /* 0.13 changed three defaults: the station's lines off -> on ("sta_off" above), X2's rate 115200 ->
+     * 921600, and the access point Kogger-XXXX / kogger1234 -> the factory network. A module an older
+     * firmware has run keeps what it ran with: settings saved but neither "baud1" nor a line 1 record
+     * meant 115200, no "ap" record meant the old access point, and they are written down once ("def13" =
+     * checked). A new or factory-reset module has nothing saved and takes the new defaults. */
+    if (first13) {
+        if (older && !b1_saved && !rec1 && nvs_set_u32(h, "baud1", 115200) == ESP_OK) {
+            s_line[1].baud = 115200;
+            ESP_LOGI(TAG, "X2 keeps 115200, the rate the earlier firmware ran it at");
+        }
+        if (older && !ap_saved) {
+            ap_cfg_t o;
+            ap_default_012(&o);
+            if (nvs_set_blob(h, "ap", &o, sizeof o) == ESP_OK) {
+                s_ap = o;
+                ESP_LOGI(TAG, "access point keeps \"%s\", the earlier firmware's default", o.ssid);
+            }
+        }
+        nvs_set_u8(h, "def13", 1);
+        nvs_commit(h);
+    }
     nvs_close(h);
     ESP_LOGI(TAG, "role %s, AP \"%s\" ch %u, %u.%u.%u.%u, line0 mode %u, line1 mode %u pins %d/%d",
              s_role == ROLE_AP ? "AP" : "station", s_ap.ssid, s_ap.channel, s_ip.ip[0], s_ip.ip[1], s_ip.ip[2],
@@ -273,7 +341,7 @@ static bool line_ok_self(int line, const line_cfg_t *c)
             return false; /* a TCP client needs somebody to call */
     }
     if (line == 1) {
-        if (c->baud < 9600 || c->baud > 4000000)
+        if (c->baud < LINK_BAUD_MIN || c->baud > LINK_BAUD_MAX)
             return false;
         bool tx = c->tx_pin >= 0, rx = c->rx_pin >= 0;
         if ((tx && !netcfg_pin_ok(c->tx_pin)) || (rx && !netcfg_pin_ok(c->rx_pin)) || (tx && rx && c->tx_pin == c->rx_pin))
@@ -324,12 +392,12 @@ static bool put_baud1(uint32_t baud, bool erase)
 
 bool netcfg_set_baud1(uint32_t baud)
 {
-    return baud >= 9600 && baud <= 4000000 && put_baud1(baud, false);
+    return baud >= LINK_BAUD_MIN && baud <= LINK_BAUD_MAX && put_baud1(baud, false);
 }
 
 bool netcfg_erase_baud1(void)
 {
-    return put_baud1(115200, true);
+    return put_baud1(NETCFG_BAUD1_DEFAULT, true);
 }
 
 uint8_t netcfg_addr(void)

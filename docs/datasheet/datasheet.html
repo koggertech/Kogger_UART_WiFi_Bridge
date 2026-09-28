@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.12.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.13.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.12.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.13.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,7 +62,7 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.12.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.13.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
@@ -111,7 +111,7 @@ laptops on its own network.</p>
   <tr><td class="k">Wi‑Fi</td><td>IEEE 802.11 b/g/n, 2.4 GHz, 20/40 MHz; Espressif LR mode optional</td></tr>
   <tr><td class="k">Transmit power</td><td>2–20 dBm limit, applied by the driver in 11 steps</td></tr>
   <tr><td class="k">Roles</td><td>station (default) or access point: open, WPA2, WPA2/WPA3; channels 1–11; 1–10 clients</td></tr>
-  <tr><td class="k">Serial lines</td><td>X1 = UART0 (host port), X2 = UART1; 9600–4 000 000 baud, 8N1; defaults 921600 / 115200;
+  <tr><td class="k">Serial lines</td><td>X1 = UART0 (host port), X2 = UART1; 9600–5 000 000 baud, 8N1; default 921600 on both;
       optional native USB Serial/JTAG build for line 0</td></tr>
   <tr><td class="k">Serial throughput</td><td>baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud, 400 KB/s at 4 Mbaud</td></tr>
   <tr><td class="k">Relay</td><td>KP1, KP2, UBX, MAVLink 1/2 (392 messages); frames ≤ 4096 B; packets ≤ 512 B; 24‑packet pool</td></tr>
@@ -149,7 +149,7 @@ laptops on its own network.</p>
 <ul>
   <li>UART lines: series resistors, Schottky clamps to GND and to a Zener‑held 3.3 V clamp rail.</li>
   <li>BOOT button on GPIO9; 10 kΩ pull‑ups on GPIO2/8/9; EN 10 kΩ + 1 µF. No reset button, no auto‑reset.</li>
-  <li>Green LED on GPIO0 (active high, not used yet). Bottom test pads: USB D−/D+, line 1 TX/RX.</li>
+  <li>Green LED on GPIO0 (active high, blinks when a reset is armed). Bottom test pads: USB D−/D+, line 1 TX/RX.</li>
   <li>X2 is wired to GPIO5/GPIO4; the firmware can move line 1 to GPIO 0, 1, 3, 4, 5, 6, 7 or 10 on other boards.</li>
 </ul>
 </div>
@@ -197,7 +197,7 @@ white silkscreen; Gerbers, drill, pick‑and‑place: <code>hardware/outputs/</c
 <div>
 <h3>Station (default role)</h3>
 <ul>
-  <li>Up to 8 saved networks; passwords are never read back.</li>
+  <li>Up to 8 saved networks, factory <code>KoggerBridge</code>; passwords are never read back.</li>
   <li>Scans every 15 s while searching, joins the strongest known network.</li>
   <li>3 retries after a lost link, then search again; stuck states are supervised (30 s connect, 15 s scan).</li>
   <li>DHCP hostname <code>headunit-wifi</code> (build option).</li>
@@ -215,10 +215,10 @@ white silkscreen; Gerbers, drill, pick‑and‑place: <code>hardware/outputs/</c
 
 <table>
   <tr><th>Default</th><th>Station role</th><th>Access‑point role</th></tr>
-  <tr><td>Line 0 (X1)</td><td>off: host port</td><td>UDP, senders, port 14444</td></tr>
-  <tr><td>Line 1 (X2)</td><td>off (when enabled: UDP senders 14445, 115200)</td><td>UDP, senders, port 14445</td></tr>
+  <tr><td>Line 0 (X1)</td><td>UDP to 10.0.0.10:14444</td><td>UDP, senders, port 14444</td></tr>
+  <tr><td>Line 1 (X2)</td><td>UDP to 10.0.0.10:14445</td><td>UDP, senders, port 14445</td></tr>
   <tr><td>Module SBP address while a line relays</td><td>87</td><td>88</td></tr>
-  <tr><td>Access point</td><td colspan="2"><code>Kogger-XXXX</code>, WPA2, password <code>kogger1234</code> (public: change it), channel 6, 4 clients</td></tr>
+  <tr><td>Wi‑Fi network</td><td colspan="2"><code>KoggerBridge</code> / <code>KoggerBridge</code> (public: change it): joined as a station, own network as an access point; WPA2, channel 6, 4 clients</td></tr>
   <tr><td>Address and DHCP</td><td colspan="2">10.0.0.10/24, pool 10.0.0.11–10.0.0.30, lease 120 min, no gateway or DNS offered</td></tr>
   <tr><td>Radio</td><td colspan="2">20 dBm, b/g/n, 20 MHz, no power save</td></tr>
 </table>
@@ -229,7 +229,7 @@ white silkscreen; Gerbers, drill, pick‑and‑place: <code>hardware/outputs/</c
 </figure>
 
 <h2 class="page">Protocol reference</h2>
-<p>The module is controlled over <b>Kogger SBP</b> on either serial port (8N1, 9600–4 000 000 baud; X1 921600, X2 115200 by
+<p>The module is controlled over <b>Kogger SBP</b> on either serial port (8N1, 9600–5 000 000 baud; 921600 on both by
 default), in either role, and over the network on the UDP port of any open line. X1 also understands SLIP frames of the
 IP bridge; the first valid frame after boot selects SBP or SLIP on X1 until the next reboot, and while line 0 relays to
 the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Full text: <code>docs/SBP_WIFI.md</code>.</p>
@@ -261,7 +261,7 @@ the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Fu
 <table>
   <tr><th>ID</th><th>GETTING</th><th>SETTING</th></tr>
   <tr><td><code>ID_UART</code> 0x18</td><td>v0 {KEY, 1, U4 baud of the asking port}; v1 {KEY, 1, own address}; v2 {KEY, own address}</td>
-      <td>v0 {KEY, U1 1, U4 baud 9600–4 000 000} for the asking port: answered at the old rate, provisional until a request
+      <td>v0 {KEY, U1 1, U4 baud 9600–5 000 000} for the asking port: answered at the old rate, provisional until a request
       arrives at the new rate (else back after 10 s); v1/v2 own address 1–254, saved</td></tr>
   <tr><td><code>ID_VERSION</code> 0x20</td><td>v0 34 bytes ([1] board 87, [14..17] serial); v1 12‑byte UID; v2 9 bytes
       {bootMode, 0, 87, 0, 0, U2 0, fwMinor, fwMajor}</td><td>—</td></tr>
@@ -411,6 +411,7 @@ back after 180 s. Updates from the network are refused. File: <code>KoggerWiFi_&
   <tr><td class="k">TCP</td><td>connect 3 s, send 5 s, retry 2 s</td></tr>
   <tr><td class="k">Link report</td><td>1000 ms (100–60000, or off)</td></tr>
   <tr><td class="k">Task watchdog</td><td>5 s, panic → reboot</td></tr>
+  <tr><td class="k">BOOT resets</td><td>held 5 s: port rates; 10 s: factory settings</td></tr>
 </table>
 </div>
 <div>
@@ -437,6 +438,7 @@ back after 180 s. Updates from the network are refused. File: <code>KoggerWiFi_&
   <tr><td><code>WB_BRIDGE_IP / WB_HOST_IP</code></td><td>10.99.0.1 / 10.99.0.2</td><td>IP bridge point‑to‑point addresses</td></tr>
   <tr><td><code>WB_OTA_CONFIRM_S</code></td><td>180</td><td>rollback deadline, 90–3600 s</td></tr>
   <tr><td><code>WB_HOSTNAME</code></td><td>headunit-wifi</td><td>DHCP hostname of the station</td></tr>
+  <tr><td><code>WB_FACTORY_SSID / PASS</code></td><td>KoggerBridge</td><td>factory network in both roles (public)</td></tr>
 </table>
 
 <h2>Measured performance</h2>

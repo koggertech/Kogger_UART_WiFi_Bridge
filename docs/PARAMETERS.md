@@ -10,17 +10,20 @@ The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, 
 
 | Setting | Default | Range | Set with | Saved |
 |---|---|---|---|---|
-| X1 (line 0) baud rate | 921600 (build option) | 9600 … 4 000 000 | `ID_UART` v0 through X1, `ID_WIFI_NET` v3 | through the asking port: when a request arrives at the new rate or by `ID_FLASH` v0, else back after 10 s; otherwise at once |
-| X2 (line 1) baud rate | 115200 | 9600 … 4 000 000 | `ID_UART` v0 through X2, `ID_WIFI_NET` v3 | the same rule |
+| X1 (line 0) baud rate | 921600 (build option) | 9600 … 5 000 000 | `ID_UART` v0 through X1, `ID_WIFI_NET` v3 | through the asking port: when a request arrives at the new rate or by `ID_FLASH` v0, else back after 10 s; otherwise at once |
+| X2 (line 1) baud rate | 921600 (0.13; 115200 before, which a module set up earlier keeps) | 9600 … 5 000 000 | `ID_UART` v0 through X2, `ID_WIFI_NET` v3 | the same rule |
 | Own SBP address | 87 station, 88 access point | 1 … 254 | `ID_WIFI_NET` v6, `ID_UART` v1/v2, `ID_WIFI` v5 | at once |
 | Link report period | 1000 ms | 0 (off), 100 … 60000 ms, clamped | `ID_WIFI` v1 | by `ID_FLASH` v0 |
 | Unsolicited frames | to every channel that asked within 60 s | — | — | — |
+
+The BOOT button held 5 s returns the port rates to their defaults, held 10 s every setting on this page
+([HARDWARE.md](HARDWARE.md#resets-with-the-boot-button-013)).
 
 ### Station (`manager.c`)
 
 | Setting | Default | Range |
 |---|---|---|
-| Saved networks | none | up to 8; SSID 1–32 bytes, password 0–64 bytes; least recently used replaced when full |
+| Saved networks | the factory network `KoggerBridge` until a list is saved (0.13; none before) | up to 8; SSID 1–32 bytes, password 0–64 bytes; least recently used replaced when full |
 | Auto‑connect | on at boot when saved networks exist | `ID_WIFI` v4 actions 0/1, text `AUTO`/`DISCONNECT` |
 | DHCP hostname | `headunit-wifi` | build option `WB_HOSTNAME` |
 
@@ -38,9 +41,9 @@ The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, 
 | Setting | Default | Range |
 |---|---|---|
 | Role | station | station / access point; takes effect at boot |
-| AP name | `Kogger-XXXX` (last two bytes of the AP MAC) | 1–32 bytes |
+| AP name | `KoggerBridge`, the factory network (0.13; `Kogger-XXXX` before, which a module set up earlier keeps) | 1–32 bytes |
 | AP security | WPA2 | open / WPA2 / WPA2+WPA3 |
-| AP password | `kogger1234` (**public, change it**) | 8–63 characters; never read back |
+| AP password | `KoggerBridge` (**public, change it**; `kogger1234` before 0.13) | 8–63 characters; never read back |
 | AP channel | 6 | 1 … 11 |
 | AP hidden | no | yes / no |
 | AP client limit | 4 | 1 … 10 |
@@ -59,12 +62,12 @@ The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, 
 
 | Setting | Line 0 (X1) | Line 1 (X2) |
 |---|---|---|
-| Mode, station role | off | off |
+| Mode, station role | UDP (off on a module set up before 0.13) | UDP (the same) |
 | Mode, access‑point role | UDP | UDP |
-| Destination | senders | senders |
+| Destination | station: fixed; access point: senders | the same |
 | Peer port (rport) / local port (lport) | 14444 / 14444 | 14445 / 14445 |
-| Peer address (fixed, TCP) | — | — |
-| Baud | `ID_UART` (921600) | 115200 (9600 … 4 000 000) |
+| Peer address (fixed, TCP) | 10.0.0.10 | 10.0.0.10 |
+| Baud | `ID_UART` (921600) | 921600 (9600 … 5 000 000) |
 | Pins TX / RX | 21 / 20 (build) | 5 / 4, from {0, 1, 3, 4, 5, 6, 7, 10}, −1 = off |
 
 | Setting | Default | Range |
@@ -87,6 +90,7 @@ Role defaults apply while a line has not been saved; saved lines are shared by b
 | `WB_OTA_CONFIRM_S` | 180 | seconds a freshly updated image has to confirm itself (90 … 3600) |
 | `WB_OTA_TEST_NO_CONFIRM` | n | **test only**: an image that never confirms and must be rolled back |
 | `WB_HOSTNAME` | `headunit-wifi` | DHCP hostname of the station |
+| `WB_FACTORY_SSID` / `WB_FACTORY_PASS` | `KoggerBridge` / `KoggerBridge` | factory network: joined as a station, own network as an access point (public) |
 
 The build overlays:
 - `sdkconfig.defaults` holds the common settings;
