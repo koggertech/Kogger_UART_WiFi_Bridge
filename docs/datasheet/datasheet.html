@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.14.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.15.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.14.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.15.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,7 +62,7 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.14.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.15.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
@@ -81,7 +81,7 @@ An optional <b>IP bridge</b> (SLIP + NAT) gives a Linux host without Wi‑Fi an 
       unknown data passes as raw bytes, in order</li>
   <li>Two lines, each: off, UDP (fixed peer, last ≤ 4 senders, broadcast) or TCP client</li>
   <li>Station (8 saved networks, auto‑connect) or access point (≤ 10 clients, DHCP)</li>
-  <li>Two equal ports: SBP control and relay on either, rate set per port (provisional until confirmed)</li>
+  <li>Two equal ports: SBP control and relay on either, rate set per port, saved at once (BOOT 5 s: back to 921600)</li>
   <li>Answers discovery (<code>ID_VERSION</code> to address 0); replies go back on the request's channel</li>
   <li>Port information: which port the host is on, what is connected to each, devices heard, traffic by protocol</li>
   <li>Radio control: power 2–20 dBm, b/g/n, 20/40 MHz, LR, power save</li>
@@ -261,8 +261,8 @@ the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Fu
 <table>
   <tr><th>ID</th><th>GETTING</th><th>SETTING</th></tr>
   <tr><td><code>ID_UART</code> 0x18</td><td>v0 {KEY, 1, U4 baud of the asking port}; v1 {KEY, 1, own address}; v2 {KEY, own address}</td>
-      <td>v0 {KEY, U1 1, U4 baud 9600–5 000 000} for the asking port: answered at the old rate, provisional until a request
-      arrives at the new rate (else back after 10 s); v1/v2 own address 1–254, saved</td></tr>
+      <td>v0 {KEY, U1 1, U4 baud 9600–5 000 000} for the asking port: answered at the old rate, then switched and saved
+      (0.15; provisional up to 0.14); v1/v2 own address 1–254, saved</td></tr>
   <tr><td><code>ID_VERSION</code> 0x20</td><td>v0 34 bytes ([1] board 87, [14..17] serial); v1 12‑byte UID; v2 9 bytes
       {bootMode, 0, 87, 0, 0, U2 0, fwMinor, fwMajor}</td><td>—</td></tr>
   <tr><td><code>ID_MARK</code> 0x21</td><td>v0 {U1 mark}</td><td>v0 {KEY}: sets the mark bit (cleared by a reboot and by <code>ID_BOOT</code> v0)</td></tr>
@@ -317,7 +317,7 @@ the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Fu
   <tr><td>v5</td><td>AP clients {U1 index, U1 total, MAC[6], ip[4], S1 RSSI} each; none {0, 0}</td><td>—</td></tr>
   <tr><td>v6</td><td>own address {U1}</td><td>{U1 address 1–254}, acknowledged from the old address</td></tr>
   <tr><td>v7</td><td>port information: {} both ports, {port}, {port, page}. Page 0, 116 bytes: flags (UART, bridging,
-      <b>asked through this port</b>, gets reports, SLIP, provisional, USB), rate now and saved, connected (nothing,
+      <b>asked through this port</b>, gets reports, SLIP, provisional up to 0.14, USB), rate now and saved, connected (nothing,
       unreadable, SBP host, SBP devices, both, MAVLink, u‑blox, IP bridge), bytes, units by protocol both ways, SBP
       requests/CONTENT, overflows. Page 1: devices heard (SBP address, board, firmware, serial; MAVLink system, type,
       autopilot). Page 2: network peers of the line</td><td>— (ERR_TYPE)</td></tr>

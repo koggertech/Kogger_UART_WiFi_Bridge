@@ -79,7 +79,6 @@ typedef struct {
 typedef struct {
     sbp_frame_t f;       /* f.payload points at payload[] below */
     sbp_chan_t  ch;      /* where it came from: the answers go there */
-    int64_t     rx_us;   /* when it was received (confirms a provisional port rate, ports.h) */
     uint8_t     payload[];
 } sbp_blob_t;
 
@@ -794,7 +793,6 @@ void manager_post_sbp(const sbp_frame_t *f, const sbp_chan_t *ch)
         return;
     b->f = *f;
     b->ch = *ch;
-    b->rx_us = esp_timer_get_time();
     memcpy(b->payload, f->payload, f->len);
     b->f.payload = b->payload;
     msg_t m = { .type = M_SBP, .buf = b };
@@ -1418,10 +1416,8 @@ static void manager_task(void *arg)
             sbp_blob_t *b = m.buf;
             ota_note_host_frame();
             int port = sbpdev_chan_port(&b->ch);
-            if (port >= 0) {
+            if (port >= 0)
                 portinfo_module_rx(port);
-                ports_note_request(port, b->rx_us);
-            }
             sbpdev_begin_request(&b->ch);
             handle_sbp(&b->f);
             sbpdev_end_request();
@@ -1430,7 +1426,6 @@ static void manager_task(void *arg)
         }
         case M_OTA_TICK:
             ota_tick();
-            ports_tick();
             supervise();
             break;
         case M_SCAN_DONE:    on_scan_done(m.arg); break;

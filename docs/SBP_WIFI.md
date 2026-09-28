@@ -1,7 +1,7 @@
 # The module as a Kogger SBP device
 
-Contract version 5 (firmware 0.14.0: rates up to 5 000 000 baud since 0.13, `ID_WIFI` v1 of 27 bytes; version 4 =
-0.12.0, version 3 = 0.11.0, version 2 = 0.10.0, version 1 = 0.2.0). Changes are summarised at the end of §3 and §4
+Contract version 6 (firmware 0.15.0: every port rate change saved at once; version 5 = 0.14.0: rates up to
+5 000 000 baud since 0.13, `ID_WIFI` v1 of 27 bytes; version 4 = 0.12.0, version 3 = 0.11.0, version 2 = 0.10.0, version 1 = 0.2.0). Changes are summarised at the end of §3 and §4
 and in [CHANGELOG.md](../CHANGELOG.md). Implementation: `firmware/main/sbp.c`, `sbpdev.c`, `manager.c`, `netctl.c`,
 `ports.c`, `portinfo.c`. Python helpers (framing and most payloads): `host/sbpframe.py`. Bench checks:
 `tools/bench_sbp.py`, `tools/bench_ports.py`.
@@ -58,11 +58,11 @@ network ([NETWORK.md](NETWORK.md) §5).
   - v0 refers to the port behind the request: the UART it came through, or, for a network sender, the UART of the
     line whose UDP port received it. The `uart` byte is ignored (KoggerApp always sends 1).
   - The acknowledgement goes out at the old rate, then the port switches.
-  - **Saving, the same for both ports** (0.12): a change of the port the request came through is **provisional**. It
-    is saved as soon as a request for the module (own address or discovery) arrives through that port at the new rate,
-    or with `ID_FLASH` v0. Without one within **10 s** the port returns to its previous rate. A change asked from the
-    network is saved at once. So a host that switches its own port and keeps talking never loses the module, and a host
-    that cannot follow the new rate gets it back.
+  - **Saving, the same for both ports** (0.15): every change is applied and **saved at once**, whichever port or the
+    network asked. A host that switched the module to a rate it cannot follow gets the module back by holding BOOT for
+    5 s: both ports return to 921600 ([HARDWARE.md](HARDWARE.md#resets-with-the-boot-button-013)). Up to 0.14 a change
+    of the port the request came through was provisional: saved only when a request arrived through that port at the
+    new rate (or with `ID_FLASH` v0), otherwise the port went back after 10 s.
   - Default rates: 921600 on both ports (on KoggerApp's auto‑detect list). X2's was 115200 before 0.13; a module set
     up under an earlier firmware keeps 115200 on X2 after the update, a new or factory‑reset one takes 921600.
   - GET: v0 → `{KEY, 1, baud}` of that port, v1 → `{KEY, 1, address}`, v2 → `{KEY, address}`. SET v1
@@ -273,7 +273,7 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
 - discovery: GETTING `ID_VERSION` to 0 or 255 is answered from the own address and relayed;
 - unsolicited frames go to every channel that asked within 60 s;
 - v3 sets the rate of the other line (or of either line from the network), saved at once; the asking port's rate is
-  changed with `ID_UART` v0, provisionally (§2);
+  changed with `ID_UART` v0 (§2; provisional up to 0.14);
 - unsolicited frames reach every subscriber even while a request from another channel is handled;
 - the reboot into a new image still leaves the address for a 0.11 image (unused by 0.12), so a rollback to 0.11 over
   SBP comes back at the address the host talks to;
@@ -293,7 +293,7 @@ with ERR_VERSION. Every answer is a CONTENT v7 `{U1 port, U1 page, …}`; ages a
 |---|---|---|
 | 0 | U1 | port |
 | 1 | U1 | page = 0 |
-| 2 | U1 | flags: bit0 UART running; bit1 bridging (the line is on); bit2 **the request for this page came through this port**; bit3 the port gets the module's unsolicited frames; bit4 locked to SLIP (IP bridge, X1 only); bit5 rate provisional (waiting for confirmation); bit6 USB transport (X1 in the USB variant) |
+| 2 | U1 | flags: bit0 UART running; bit1 bridging (the line is on); bit2 **the request for this page came through this port**; bit3 the port gets the module's unsolicited frames; bit4 locked to SLIP (IP bridge, X1 only); bit5 rate provisional (up to 0.14; never set since 0.15) (waiting for confirmation); bit6 USB transport (X1 in the USB variant) |
 | 3 | U4 | current rate (0 = UART off) |
 | 7 | U4 | saved rate |
 | 11 | U1 | connected, judged over the last 10 s: 0 nothing; 1 unreadable bytes (another rate or an unknown protocol); 2 SBP host; 3 SBP device(s); 4 SBP host and devices; 5 MAVLink; 6 u‑blox; 7 IP bridge host (SLIP); 8 other framed traffic |

@@ -271,7 +271,7 @@ static void set_line(const sbp_frame_t *f)
      * priority) closes the socket of a changed line. The other port's new rate is saved at once. */
     bool ok = relay_line_set(line, &c);
     sbpdev_ack(f, ok ? SBP_RESP_OK : SBP_RESP_ERR_RUNTIME);
-    if (ok && rate && !ports_set_baud(line, baud, false))
+    if (ok && rate && !ports_set_baud(line, baud))
         ESP_LOGW(TAG, "line %d: rate %lu not applied", line, (unsigned long)baud);
     send_line(line);
 }
@@ -350,8 +350,6 @@ static void send_port(int port, int page)
         bool slip = port == 0 && link_proto() == LINK_PROTO_SLIP;
         if (slip)
             fl |= PI_F_SLIP;
-        if (ports_provisional(port))
-            fl |= PI_F_PROVISION;
 #if CONFIG_WB_LINK_USB_SERIAL_JTAG
         if (port == 0)
             fl |= PI_F_USB;

@@ -70,6 +70,7 @@ password. Line 0 (X1) relays to UDP 10.0.0.10:14444 and line 1 (X2) to 10.0.0.10
 address; both ports at 921600 baud; own address 87. A module switched to the access point role with factory settings
 listens on the same ports, so two factory modules link X1 to X1 and X2 to X2.
 
+- The 5 s press is the way back from a port rate a host cannot follow: every rate change is saved at once (0.15).
 - A press shorter than 5 s does nothing, and neither does a button that is already down when the firmware starts.
 - Until a freshly updated image has confirmed itself ([UPDATE.md](UPDATE.md)) the button does nothing: a restart then
   would roll the update back.

@@ -1,6 +1,6 @@
 # Parameters
 
-Every setting of firmware 0.14.0 with its default and range, the build options, the timing constants and the buffers.
+Every setting of firmware 0.15.0 with its default and range, the build options, the timing constants and the buffers.
 The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, `sdkconfig.defaults`,
 `partitions.csv`); the file is named where it helps.
 
@@ -10,7 +10,7 @@ The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, 
 
 | Setting | Default | Range | Set with | Saved |
 |---|---|---|---|---|
-| X1 (line 0) baud rate | 921600 (build option) | 9600 … 5 000 000 | `ID_UART` v0 through X1, `ID_WIFI_NET` v3 | through the asking port: when a request arrives at the new rate or by `ID_FLASH` v0, else back after 10 s; otherwise at once |
+| X1 (line 0) baud rate | 921600 (build option) | 9600 … 5 000 000 | `ID_UART` v0 through X1, `ID_WIFI_NET` v3 | at once (0.15; up to 0.14 through the asking port only after a request at the new rate, else back after 10 s); BOOT held 5 s: back to the default |
 | X2 (line 1) baud rate | 921600 (0.13; 115200 before, which a module set up earlier keeps) | 9600 … 5 000 000 | `ID_UART` v0 through X2, `ID_WIFI_NET` v3 | the same rule |
 | Own SBP address | 87 station, 88 access point | 1 … 254 | `ID_WIFI_NET` v6, `ID_UART` v1/v2, `ID_WIFI` v5 | at once |
 | Link report period | 1000 ms | 0 (off), 100 … 60000 ms, clamped | `ID_WIFI` v1 | by `ID_FLASH` v0 |

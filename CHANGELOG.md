@@ -3,6 +3,19 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.15.0 — 2026‑09‑28
+
+- **A port rate is saved at once**, also when the request came through that very port (`ID_UART` v0). Up to 0.14 such
+  a change was provisional and went back after 10 s unless a request arrived at the new rate, so a port could not be
+  moved to a rate the host itself cannot run (a PC adapter that stops at 2 Mbaud could not set 5 Mbaud for the device
+  that will sit on the port). The way back from a rate nobody can follow is the BOOT button held 5 s.
+- `ID_WIFI_NET` v7: the "provisional" flag is never set any more.
+
+Builds (UART and USB) without warnings; PC tests 66/66. Verified on a module: update 0.14 → 0.15 7/7; port checks
+27/27; X1 set to 460800 through X1 saved at once and still 460800 after a reboot; the BOOT 5 s press brought both ports
+back to 921600 and kept every other setting; X1 set to 5 000 000 through X1 accepted and saved (not read back: the bench
+adapter stops at 2 Mbaud).
+
 ## 0.14.0 — 2026‑09‑28
 
 - **A burst of requests is answered in full.** The control queue held 24 messages, 8 of them kept for Wi‑Fi events,

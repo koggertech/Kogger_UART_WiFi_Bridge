@@ -355,7 +355,7 @@ static void handle_uart(const sbp_frame_t *f)
             return;
         }
         sbpdev_ack(f, SBP_RESP_OK);                 /* leaves at the old rate: queued before the switch */
-        if (!ports_set_baud(chan_line(), baud, sbpdev_chan_port(&s_reply) >= 0))
+        if (!ports_set_baud(chan_line(), baud))
             ESP_LOGW(TAG, "rate %lu not applied", (unsigned long)baud);
     } else {                                        /* v1 {key, uart id, address}, v2 {key, address} */
         size_t at = ver == 1 ? 5 : 4;

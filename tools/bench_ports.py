@@ -10,12 +10,15 @@ address need not be known. What it checks:
   - discovery to 0 and 255 is answered from the own address, other frames to 0 are not taken;
   - ID_WIFI_NET v7: page 0 of both ports ("asked here" on this port, host on this port), pages 1 and 2;
   - the unsolicited v1 report reaches this port after a request;
-  - a rate change of this port (ID_UART v0) is provisional: confirmed by a request at the new rate (saved),
-    or back to the old rate after 10 s without one (not saved); ID_WIFI_NET v3 keeps this port's rate
-    (a written-back record must not move the port the host sits on);
+  - a rate change of this port (ID_UART v0) is saved at once (0.15): the module stays at the new rate without
+    any request (12 s); ID_WIFI_NET v3 keeps this port's rate (a written-back record must not move the port the
+    host sits on);
   - a rate change of the other port is saved at once (and put back);
   - addresses 0 and 255 are refused (ID_UART v1/v2, ID_WIFI_NET v6).
-Every changed setting is put back. Exit code 0 = all checks PASS.
+Every changed setting is put back. It writes both line records back (ID_WIFI_NET v3, the values it read): a line that ran on its role's defaults is saved
+afterwards and then applies in both roles. On a module being set up for use, clear them with a role change that
+forgets the lines (ID_WIFI_NET v0, flag 2), or run it before the setup.
+Exit code 0 = all checks PASS.
 """
 import argparse
 import os
@@ -67,21 +70,23 @@ def set_line_baud(d, rec, baud):
     return d.setting(SB.ID_WIFI_NET, V_LINE, SB.line_payload_from(rec, baud=baud))  # carries the key
 
 
-def provisional_test(d, port, old, new, how):
-    """Change this port's rate, confirm it at the new rate, then change it back the same way."""
-    code, _ = set_rate_uart(d, new) if how == 'uart' else set_line_baud(d, line_rec(d, port), new)
-    check('%s: rate %d on this port -> OK (acknowledged at the old rate)' % (how, new), code == 1, code)
+def own_rate_test(d, port, old, new):
+    """Change this port's rate with ID_UART v0: saved at once, kept without any request; then back."""
+    code, _ = set_rate_uart(d, new)
+    check('uart: rate %d on this port -> OK (acknowledged at the old rate)' % new, code == 1, code)
     time.sleep(0.3)
     d.baud(new)
+    d.rx.clear()
+    d.pump(12)  # longer than the 10 s after which up to 0.14 an unconfirmed change went back
     p = page0(d, port)
-    check('%s: the module answers at %d; the request confirmed it: saved %d, not provisional' % (how, new, new),
+    check('uart: 12 s later with no request the module still answers at %d, saved %d, not provisional' % (new, new),
           p is not None and p['baud'] == new and p['saved'] == new and not p['flags']['provisional'],
           p and (p['baud'], p['saved'], p['flags']['provisional']))
-    code, _ = set_rate_uart(d, old) if how == 'uart' else set_line_baud(d, line_rec(d, port), old)
+    code, _ = set_rate_uart(d, old)
     time.sleep(0.3)
     d.baud(old)
     p = page0(d, port)
-    check('%s: back to %d and confirmed (saved %d)' % (how, old, old),
+    check('uart: back to %d, saved %d' % (old, old),
           code == 1 and p is not None and p['baud'] == old and p['saved'] == old, p and (p['baud'], p['saved']))
 
 
@@ -89,7 +94,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--port', required=True)
     ap.add_argument('--baud', type=int, default=921600)
-    ap.add_argument('--try-rate', type=int, default=460800, help='rate for the provisional change tests')
+    ap.add_argument('--try-rate', type=int, default=460800, help='rate for the change of this port\'s rate')
     ap.add_argument('--long', action='store_true', help='also wait 61 s: reports stop without requests')
     a = ap.parse_args()
     d = Dev(a.port, a.baud)
@@ -146,23 +151,14 @@ def main():
     rep = d.collect(lambda f: f.id == SB.ID_WIFI and f.ver == 1 and f.type == SB.CONTENT, 2.5)
     check('the periodic v1 report reaches this port after a request (%d in 2.5 s)' % len(rep), len(rep) >= 1)
 
-    # ---- rates of this port: confirmed, and back without confirmation
+    # ---- rate of this port: saved at once (0.15)
     check('ID_UART GET v0 = this port\'s rate', uart_rate(d) == a.baud, uart_rate(d))
-    provisional_test(d, me, a.baud, a.try_rate, 'uart')
+    own_rate_test(d, me, a.baud, a.try_rate)
     code, _ = set_line_baud(d, line_rec(d, me), a.try_rate)
     p = page0(d, me)
     check('v3 with rate %d on this port\'s own line: OK, rate kept at %d' % (a.try_rate, a.baud),
           code == 1 and p is not None and p['baud'] == a.baud and not p['flags']['provisional'],
           p and (code, p['baud']))
-    code, _ = set_rate_uart(d, a.try_rate)
-    check('unconfirmed change: rate %d -> OK, the host stays at %d' % (a.try_rate, a.baud), code == 1, code)
-    time.sleep(3)
-    d.rx.clear()
-    d.pump(8.5)
-    p = page0(d, me)
-    check('after 10 s without a request at %d the port is back at %d, saved rate unchanged' % (a.try_rate, a.baud),
-          p is not None and p['baud'] == a.baud and p['saved'] == a.baud and not p['flags']['provisional'],
-          p and (p['baud'], p['saved']))
 
     # ---- rate of the other port: saved at once
     rec = line_rec(d, other)

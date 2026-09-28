@@ -1,7 +1,6 @@
 #include "ports.h"
 
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "nvs.h"
 #include "sdkconfig.h"
 
@@ -18,14 +17,6 @@ static const char *TAG = "ports";
 #endif
 
 static uint32_t s_saved0 = DEFAULT0;
-
-/* One provisional change per port. The confirmation window runs from the moment the UART really
- * switched (the acknowledgement may still be queued behind relayed data at a low rate). */
-static struct {
-    bool     on;
-    uint32_t old;            /* rate to return to */
-    int64_t  asked;          /* when the change was requested */
-} s_prov[PORTS_N];
 
 void ports_load(void)
 {
@@ -64,11 +55,6 @@ uint32_t ports_saved_baud(int port)
     return c.baud;
 }
 
-bool ports_provisional(int port)
-{
-    return ok_port(port) && s_prov[port].on;
-}
-
 static bool save0(uint32_t baud)
 {
     nvs_handle_t h;
@@ -93,12 +79,7 @@ static bool apply(int port, uint32_t baud)
     return uline_set_baud(baud);
 }
 
-static int64_t switched_us(int port)
-{
-    return port == 0 ? link_baud_switched_us() : uline_baud_switched_us();
-}
-
-bool ports_set_baud(int port, uint32_t baud, bool provisional)
+bool ports_set_baud(int port, uint32_t baud)
 {
     if (!ok_port(port) || !ports_baud_ok(baud))
         return false;
@@ -106,58 +87,15 @@ bool ports_set_baud(int port, uint32_t baud, bool provisional)
     if (!running)
         return save(port, baud); /* applies when the UART starts */
     uint32_t cur = ports_baud(port);
-    if (provisional) {
-        if (!s_prov[port].on) {
-            s_prov[port].old = cur;
-            s_prov[port].on = true;
-        }
-        s_prov[port].asked = esp_timer_get_time();
-        if (baud == s_prov[port].old) /* back to where it was: nothing left to confirm */
-            s_prov[port].on = false;
-        ESP_LOGI(TAG, "port %d: %lu provisional", port, (unsigned long)baud);
-        return baud == cur || apply(port, baud);
-    }
-    s_prov[port].on = false;
     if (baud != cur && !apply(port, baud))
         return false;
-    return save(port, baud);
-}
-
-void ports_note_request(int port, int64_t rx_us)
-{
-    if (!ports_provisional(port))
-        return;
-    int64_t sw = switched_us(port);
-    if (sw == 0 || rx_us <= sw || rx_us <= s_prov[port].asked)
-        return; /* not switched yet, or the frame came in at the old rate */
-    s_prov[port].on = false;
-    uint32_t b = ports_baud(port);
-    bool ok = save(port, b);
-    ESP_LOGI(TAG, "port %d: %lu confirmed%s", port, (unsigned long)b, ok ? "" : ", NOT saved");
-}
-
-void ports_tick(void)
-{
-    int64_t now = esp_timer_get_time();
-    for (int p = 0; p < PORTS_N; p++) {
-        if (!s_prov[p].on)
-            continue;
-        int64_t sw = switched_us(p);
-        if (sw == 0)
-            continue; /* the acknowledgement is still on its way at the old rate */
-        int64_t from = sw > s_prov[p].asked ? sw : s_prov[p].asked;
-        if (now - from < (int64_t)PORTS_CONFIRM_MS * 1000)
-            continue;
-        s_prov[p].on = false;
-        ESP_LOGW(TAG, "port %d: no request at %lu, back to %lu", p, (unsigned long)ports_baud(p),
-                 (unsigned long)s_prov[p].old);
-        apply(p, s_prov[p].old);
-    }
+    bool ok = save(port, baud);
+    ESP_LOGI(TAG, "port %d: %lu%s", port, (unsigned long)baud, ok ? ", saved" : ", NOT saved");
+    return ok;
 }
 
 bool ports_save_all(void)
 {
-    s_prov[0].on = s_prov[1].on = false;
     bool ok = save0(link_baud());
     if (uline_running())
         ok = netcfg_set_baud1(uline_baud()) && ok;
