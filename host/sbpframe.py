@@ -132,7 +132,7 @@ def parse_status(p):
 
 
 def parse_link(p):
-    """ID_WIFI CONTENT v1 (22 bytes; 0.11 appends the reset reason)."""
+    """ID_WIFI CONTENT v1 (22 bytes; 0.11 appends the reset reason, 0.14 the requests dropped for a full queue)."""
     if len(p) < 22:
         raise ValueError('bad v1 length %d' % len(p))
     st, rssi = p[0], struct.unpack('b', p[1:2])[0]
@@ -141,6 +141,8 @@ def parse_link(p):
              tx_total=tx_tot, uptime=up)
     if len(p) > 22:
         d['reset'] = RESET_REASONS[p[22]] if p[22] < len(RESET_REASONS) else p[22]
+    if len(p) >= 27:
+        d['req_drops'] = struct.unpack('<I', p[23:27])[0]
     return d
 
 

@@ -113,6 +113,18 @@ reboots every ~10 s ([RELAY.md](RELAY.md)).
 **Updating from 0.10 to 0.11 needs the new `sbp_update.py`.** The old script reboots the module 6 s after the update;
 0.11 confirms only after 60 s, so that reboot would roll the new firmware back.
 
+**Check that the settings survived.** `tools/module_state.py` reads every saved setting over SBP (role, access point
+without the password, address/DHCP, both lines, own address, both port rates, radio, saved networks) as JSON; with
+`--compare` it checks a later reading against it and prints "SETTINGS KEPT" (exit code 0) or each change. A module
+that was connected must also be back on the same network within `--wait` seconds. Only the module (board 87) is taken
+as the answer to discovery: a relaying line carries discovery to the devices behind the network too.
+
+```
+python tools/module_state.py --port /dev/ttyUSB0 --baud 921600 > before.json
+python tools/sbp_update.py --port /dev/ttyUSB0 --route 87 --sbp-only dist/KoggerWiFi_0.13.0.ufww
+python tools/module_state.py --port /dev/ttyUSB0 --baud 921600 --compare before.json
+```
+
 **Versions.** `ID_VERSION v2` carries only `fwMajor.fwMinor`, one byte each. KoggerApp checks an update by them, so
 **every release raises the second number** (0.4 → 0.5). The third number shows only in `VER` over SLIP, which is not
 enough for the application. Version 0.9 is taken by a test image, so the release after 0.8 is 0.10.

@@ -40,7 +40,9 @@
 #define MAX_SCAN        32
 #define CONNECT_RETRIES 3
 #define SEARCH_PERIOD_US (15 * 1000 * 1000)
+#define QUEUE_LEN       64                       /* a host's burst of requests fits (KoggerApp opens with ~30) */
 #define EVENT_RESERVE   8                        /* queue slots only Wi-Fi events and timers may take */
+#define REQ_WAIT_TICKS  2                        /* 20 ms a request waits for room before it is dropped */
 #define CONNECT_STUCK_US (30LL * 1000 * 1000)    /* supervision limits (docs/DESIGN.md, 0.11) */
 #define SCAN_STUCK_US   (15LL * 1000 * 1000)
 #define AP_LOST_TICKS   4                        /* 2 s of 500 ms ticks without an association */
@@ -106,6 +108,7 @@ static struct {
 } S;
 
 static QueueHandle_t s_q;
+static volatile uint32_t s_req_drops; /* requests dropped for a full queue: ID_WIFI v1 (room_for_request) */
 static esp_netif_t *s_net;            /* station or access point interface */
 static bool s_ap;                     /* running as access point (the role is fixed until reboot) */
 static esp_timer_handle_t s_timer;    /* search retry */
@@ -336,7 +339,7 @@ static void sbp_send_link(bool notify)
     } else if (S.st == ST_CONNECTED && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         rssi = ap.rssi;
     }
-    uint8_t p[23];
+    uint8_t p[27];
     p[0] = (uint8_t)S.st;
     p[1] = (uint8_t)(int8_t)rssi;
     sbp_put_u32(&p[2], ws.rx_bps);
@@ -345,6 +348,7 @@ static void sbp_send_link(bool notify)
     sbp_put_u32(&p[14], ws.tx_total);
     sbp_put_u32(&p[18], (uint32_t)(esp_timer_get_time() / 1000000));
     p[22] = (uint8_t)esp_reset_reason(); /* 0.11: why the module last restarted (docs/SBP_WIFI.md) */
+    sbp_put_u32(&p[23], s_req_drops);    /* 0.14: requests dropped for a full queue, should stay 0 */
     (notify ? sbpdev_notify : sbpdev_send)(SBP_T_CONTENT, 1, SBP_ID_WIFI, p, sizeof p);
 }
 
@@ -753,10 +757,25 @@ static void otatick_cb(void *arg)
     post(&m);
 }
 
+/* Room for one more request, the Wi-Fi events keeping theirs. The callers (the UART RX tasks and the network task)
+ * outrank the manager, so a burst was queued whole before the manager ran and everything past the queue was lost
+ * (0.13 and before). A request that finds the queue full now sleeps, which lets the manager drain it. */
+static bool room_for_request(void)
+{
+    for (int i = 0; uxQueueSpacesAvailable(s_q) <= EVENT_RESERVE; i++) {
+        if (i == REQ_WAIT_TICKS) {
+            s_req_drops++;
+            return false;
+        }
+        vTaskDelay(1);
+    }
+    return true;
+}
+
 void manager_on_ctl(const uint8_t *line, size_t len)
 {
-    if (uxQueueSpacesAvailable(s_q) <= EVENT_RESERVE)
-        return; /* flooded: the host repeats, the Wi-Fi events keep their room */
+    if (!room_for_request())
+        return;
     char *s = malloc(len + 1);
     if (!s)
         return;
@@ -768,8 +787,8 @@ void manager_on_ctl(const uint8_t *line, size_t len)
 
 void manager_post_sbp(const sbp_frame_t *f, const sbp_chan_t *ch)
 {
-    if (uxQueueSpacesAvailable(s_q) <= EVENT_RESERVE)
-        return; /* flooded with requests: drop this one (the host repeats), keep room for events */
+    if (!room_for_request())
+        return;
     sbp_blob_t *b = malloc(sizeof *b + f->len);
     if (!b)
         return;
@@ -1438,7 +1457,7 @@ void manager_init(esp_netif_t *net)
 {
     s_net = net;
     s_ap = netcfg_role() == ROLE_AP;
-    s_q = xQueueCreate(24, sizeof(msg_t));
+    s_q = xQueueCreate(QUEUE_LEN, sizeof(msg_t));
     configASSERT(s_q);
     known_load();
     const esp_timer_create_args_t ta = { .callback = timer_cb, .name = "mgr" };

@@ -3,6 +3,22 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.14.0 — 2026‑09‑28
+
+- **A burst of requests is answered in full.** The control queue held 24 messages, 8 of them kept for Wi‑Fi events,
+  and a full queue dropped a request at once and silently. The receiving tasks outrank the manager, so a host that sends
+  many requests at once (KoggerApp does when it opens a port) could lose some of them, and more right after power‑up,
+  when Wi‑Fi events share the queue. The queue now holds 64, and a request that finds it full waits up to 20 ms, which
+  lets the manager drain it.
+- `ID_WIFI` v1 (link report) is 27 bytes: `U4` requests dropped anyway; it should stay 0. Hosts that read the first 22 or
+  23 bytes are not affected.
+- `tools/module_state.py` reads every saved setting as JSON and checks a later reading against it, for example before
+  and after an update ([docs/UPDATE.md](docs/UPDATE.md)); `tools/bench_ports.py` sends a burst of 60 requests.
+
+Builds (UART and USB) without warnings; PC tests 66/66. Verified on the bench: 60 requests at once, 58 answers on 0.13
+and all 60 on 0.14; a mixed burst of ten request types answered in full, counters 0; update 0.13 → 0.14 7/7 with every
+setting kept (`module_state.py`); port checks 29/29.
+
 ## 0.13.0 — 2026‑09‑28
 
 - **Both ports up to 5 000 000 baud** (was 4 000 000): `ID_UART` v0, `ID_WIFI_NET` v3 and the text `BAUD`. 5 Mbaud is

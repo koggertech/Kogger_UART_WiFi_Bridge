@@ -446,6 +446,17 @@ def relay_tests(run, tmp):
             check('%s: frames > 512 B cut into 512-byte packets that add up to the frame' % tag, ok)
 
 
+def link_report_tests():
+    """ID_WIFI v1 by firmware generation, read with host/sbpframe.parse_link."""
+    base = bytes([3, 0xC4]) + bytes(20)
+    check('py: ID_WIFI v1 of 0.10 (22 B): no reset reason, no drop count',
+          'reset' not in SB.parse_link(base) and 'req_drops' not in SB.parse_link(base))
+    d = SB.parse_link(base + bytes([3]))
+    check('py: ID_WIFI v1 of 0.11 (23 B): reset reason SW', d.get('reset') == 'SW' and 'req_drops' not in d)
+    d = SB.parse_link(base + bytes([3]) + (7).to_bytes(4, 'little'))
+    check('py: ID_WIFI v1 of 0.14 (27 B): reset reason and 7 dropped requests', d.get('reset') == 'SW' and d.get('req_drops') == 7)
+
+
 def bootkey_tests(exe):
     """BOOT button poll step (firmware/main/bootkey.c), 50 ms per poll: 100 polls down = 5 s, 200 = 10 s."""
     def run(seq):
@@ -548,6 +559,7 @@ def portinfo_tests(exe):
 
 def main():
     py_tests()
+    link_report_tests()
     with tempfile.TemporaryDirectory() as tmp:
         exe = build(tmp)
         if exe:

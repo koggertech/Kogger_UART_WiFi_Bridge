@@ -121,9 +121,15 @@ In the AP role, v0 describes the module's own access point:
 - IP and netmask are the AP's address, the gateway equals the AP address, DNS is 0;
 - RSSI is that of the weakest client (0 without clients).
 
-**CONTENT v1: link report** (23 bytes since 0.11, 22 before). Sent **by itself once per period** (1000 ms by default)
-while the channel is in SBP mode: `U1 state, S1 RSSI, U4 rx_Bps, U4 tx_Bps, U4 rx_total, U4 tx_total, U4 uptime_s,
-U1 last reset reason`. Totals wrap at 2³². In the AP role RSSI is that of the weakest client.
+**CONTENT v1: link report** (27 bytes since 0.14, 23 since 0.11, 22 before). Sent **by itself once per period**
+(1000 ms by default) while the channel is in SBP mode: `U1 state, S1 RSSI, U4 rx_Bps, U4 tx_Bps, U4 rx_total,
+U4 tx_total, U4 uptime_s, U1 last reset reason, U4 requests dropped`. Totals wrap at 2³². In the AP role RSSI is that
+of the weakest client. A host reads the fields its length has and ignores the rest.
+
+**Requests dropped** (0.14) counts requests the module could not queue: its control queue (64 messages, 8 of them kept
+for Wi‑Fi events) stayed full for 20 ms. It should stay 0. Up to 0.13 the queue held 24 and a full one dropped the
+request at once and silently; the receiving tasks outrank the manager, so a burst of requests (KoggerApp sends one when
+it opens a port) could lose some, and more right after power‑up, when Wi‑Fi events share the queue.
 
 The reset reason is ESP‑IDF's `esp_reset_reason_t`: 1 power‑on, 3 software (`esp_restart`: update, role change, the
 `ID_BOOT` window), 4 panic, 5 interrupt watchdog, **6 task watchdog**, 7 other watchdog, 9 brownout, 14 power glitch,

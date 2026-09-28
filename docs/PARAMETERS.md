@@ -168,7 +168,7 @@ releases to this layout.
 | Packet size / packet pool | 512 B / 24 packets (12 KiB) | `kpack.h` `KP_MAX_PACKET`, `relay.c` `POOL_N` |
 | Network receive buffer | 1500 B | `relay.c` `RXBUF` |
 | Rescan budget | 8 bytes per input byte, saved up to 32 × 4096 | `kframe.h` `KF_BUDGET_RATIO`, `KF_BUDGET_SAVE` |
-| Manager queue / slots kept for Wi‑Fi events | 24 / 8 | `manager.c` `EVENT_RESERVE` |
+| Manager queue / slots kept for Wi‑Fi events / a request's wait for room | 64 / 8 / 20 ms (0.14; 24 / 8 / none before) | `manager.c` `QUEUE_LEN`, `EVENT_RESERVE`, `REQ_WAIT_TICKS` |
 | Scan results kept | 32 networks | `manager.c` `MAX_SCAN` |
 | DNS relay pending queries | 32 | `bridge.c` `DNS_PENDING` |
 | SLIP frame payload | 1500 B | `frame.h` |

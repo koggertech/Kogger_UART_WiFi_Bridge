@@ -192,6 +192,19 @@ def main():
     f = d.get(SB.ID_UART, 1, KEY + bytes([1]))
     check('ID_UART v1 = the own address %d' % route, f is not None and f.payload[5] == route, f and f.payload.hex())
 
+    # ---- a burst of requests, as KoggerApp sends when it opens a port: every one answered (0.14)
+    kinds = [(SB.ID_WIFI_NET, 0), (SB.ID_WIFI_NET, 1), (SB.ID_WIFI_NET, 2), (SB.ID_WIFI_NET, V_ADDR)]
+    f = d.get(SB.ID_WIFI, 1)
+    drops0 = SB.parse_link(f.payload).get('req_drops') if f else None
+    d.rx.clear()
+    d.p.write(b''.join(SB.encode(route, SB.mode(SB.GETTING, kinds[i % 4][1]), kinds[i % 4][0], b'') for i in range(60)))
+    got = d.collect(lambda f: (f.id, f.ver) in kinds and f.type == SB.CONTENT and not f.resp, 4)
+    check('a burst of 60 requests: every one answered', len(got) == 60, '%d answers' % len(got))
+    f = d.get(SB.ID_WIFI, 1)
+    drops1 = SB.parse_link(f.payload).get('req_drops') if f else None
+    check('ID_WIFI v1: requests dropped for a full queue, none in the burst', drops0 is not None and drops1 == drops0,
+          '%s -> %s' % (drops0, drops1))
+
     if a.long:
         d.rx.clear()
         d.pump(61)

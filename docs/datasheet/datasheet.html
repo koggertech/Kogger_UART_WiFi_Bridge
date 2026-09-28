@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.13.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.14.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.13.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.14.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,7 +62,7 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.13.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.14.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
@@ -275,8 +275,8 @@ the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Fu
 <table>
   <tr><th>Ver.</th><th>GETTING → CONTENT</th><th>SETTING</th></tr>
   <tr><td>v0</td><td>state, 39 bytes + SSID (below); also sent by itself on every change</td><td>— (ERR_TYPE)</td></tr>
-  <tr><td>v1</td><td>link report, 23 bytes: U1 state, S1 RSSI, U4 rx B/s, U4 tx B/s, U4 rx total, U4 tx total, U4 uptime s,
-      U1 last reset reason (esp_reset_reason_t: 1 power‑on, 3 software, 4 panic, 6 task watchdog, 9 brownout); sent
+  <tr><td>v1</td><td>link report, 27 bytes: U1 state, S1 RSSI, U4 rx B/s, U4 tx B/s, U4 rx total, U4 tx total, U4 uptime s,
+      U1 last reset reason (esp_reset_reason_t: 1 power‑on, 3 software, 4 panic, 6 task watchdog, 9 brownout), U4 requests dropped for a full queue (0.14, stays 0); sent
       periodically</td><td>{U2 period ms}: 0 off, 100–60000</td></tr>
   <tr><td>v2</td><td>scan: one CONTENT per network {U1 index, U1 total, S1 RSSI, U1 channel, U1 security, U1 flags,
       BSSID[6], U1 len, SSID}; none: {0, 0}</td><td>start a scan (OK); ERR_RUNTIME while connecting or in the AP role</td></tr>
