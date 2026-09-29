@@ -520,9 +520,9 @@ def survey_tests(exe):
     check('survey: a dwell over the maximum is pulled down, a mask of real channels is kept',
           got[2] == (1000, 3), str(got[2]))
 
-    script = ['begin 7 100 6', 'dwell 1 100', 'dwell 2 100', 'dwell 3 100',
-              'frame 1 -40 -95 20000 aabbccddeeff', 'frame 1 -60 -95 5000 aabbccddeeff',
-              'frame 1 -50 -90 5000 001122334455', 'frame 2 -70 -95 100 ',
+    script = ['begin 7 100 6 001122334455', 'dwell 1 100', 'dwell 2 100', 'dwell 3 100',
+              'frame 1 -40 -95 20000 aabbccddeeff 001122334455', 'frame 1 -60 -95 5000 aabbccddeeff ffffffffffff',
+              'frame 1 -50 -90 5000 001122334455 001122334455', 'frame 2 -70 -95 100',
               'pages']
     out = run(script)
     pages = [SB.parse_survey(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')]
@@ -542,6 +542,17 @@ def survey_tests(exe):
     out = run(['begin 0 100 1', 'dwell 1 100', 'frame 1 -40 -95 1000 aabbccddeeff', 'pages'])
     p = [SB.parse_survey(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')][0]
     check('survey: one unchanging noise figure is flagged as not to be trusted', p['flags']['noise_bad'], str(p))
+    check('survey: the air time of the module own network is reported apart (0.17)',
+          p1['own_permille'] == 250 and p1['busy_permille'] == 300, str((p1['own_permille'], p1['busy_permille'])))
+    check('survey: a channel with none of the module own traffic reports 0 of it',
+          pages[1]['own_permille'] == 0, str(pages[1]))
+
+    out = run(['begin 1 100 1 001122334455', 'dwell 1 100',
+               'frame 1 -40 -95 50000 aabbccddeeff 001122334455',
+               'frame 1 -40 -95 90000 aabbccddeeff 001122334455', 'pages'])
+    p = [SB.parse_survey(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')][0]
+    check('survey: the own share never exceeds the busy figure it is part of',
+          p['own_permille'] <= p['busy_permille'] == 1000, str(p))
     check('survey: the module own channel is flagged', p['flags']['home'], str(p['flags']))
 
 

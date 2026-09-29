@@ -39,11 +39,12 @@ def pages_of(d, timeout):
 
 
 def show(pages):
-    print('  ch  dwell  busy%%  frames  senders  rssi  noise  flags')
+    print('  ch  dwell  busy%%   own%%  frames  senders  rssi  noise  flags')
     for p in sorted(pages, key=lambda x: x['channel']):
         fl = ' '.join(k for k, v in p['flags'].items() if v)
-        print('  %2d  %5d  %5.1f  %6d  %7d  %4d  %5d  %s' % (p['channel'], p['dwell_ms'],
-              p['busy_permille'] / 10.0, p['frames'], p['senders'], p['rssi'], p['noise'], fl))
+        print('  %2d  %5d  %5.1f  %5.1f  %6d  %7d  %4d  %5d  %s' % (p['channel'], p['dwell_ms'],
+              p['busy_permille'] / 10.0, p.get('own_permille', 0) / 10.0, p['frames'], p['senders'],
+              p['rssi'], p['noise'], fl))
 
 
 def main():
@@ -95,6 +96,18 @@ def main():
           all(p['flags']['ap_ok'] == (p['channel'] <= SB.SURVEY_CH_SCAN_MAX) for p in pages))
     homes = [p['channel'] for p in pages if p['flags']['home']]
     check('at most one channel is flagged as the module own', len(homes) <= 1, str(homes))
+    if fw >= (0, 17):
+        check('every page carries the module own network share (0.17)',
+              all('own_permille' in p for p in pages))
+        check('the own share never exceeds the busy figure',
+              all(p['own_permille'] <= p['busy_permille'] for p in pages),
+              str([(p['channel'], p['own_permille'], p['busy_permille']) for p in pages]))
+        own = [p for p in pages if p.get('own_permille')]
+        # 2.4 GHz channels are 20 MHz wide and 5 MHz apart, so a radio parked on one hears its neighbours:
+        # the module's own network shows up within about four channels of its own.
+        check('the module own traffic is on its own channel and its neighbours only',
+              all(homes and abs(p['channel'] - homes[0]) <= 4 for p in own),
+              str([p['channel'] for p in own]))
     heard = [p for p in pages if p['frames']]
     check('at least one channel heard something (there is Wi-Fi around)', heard)
     check('a frame implies air time on that channel', all(p['busy_permille'] > 0 for p in heard),

@@ -711,6 +711,25 @@ static int request_scan(void)
     return scan_start() ? 0 : -1;
 }
 
+/* The network a frame belongs to: which address holds the BSSID depends on the two DS bits. NULL when the
+ * frame carries no single BSSID (a control frame, a frame between two access points, or a short one). */
+static const uint8_t *frame_bssid(const uint8_t *p, uint16_t len)
+{
+    if (len < 24)
+        return NULL;
+    uint8_t type = (uint8_t)((p[0] >> 2) & 3);
+    if (type == 1)
+        return NULL;                  /* control */
+    if (type == 0)
+        return p + 16;                /* management: addr3 */
+    switch (p[1] & 3) {               /* data: to_ds | from_ds */
+    case 0: return p + 16;            /* neither: addr3 */
+    case 1: return p + 4;             /* to the access point: addr1 */
+    case 2: return p + 10;            /* from the access point: addr2 */
+    default: return NULL;             /* both: four addresses, no single BSSID */
+    }
+}
+
 /* Promiscuous callback, Wi-Fi task: one frame heard. Only survey_frame() is touched here. */
 static void survey_rx(void *buf, wifi_promiscuous_pkt_type_t type)
 {
@@ -719,11 +738,12 @@ static void survey_rx(void *buf, wifi_promiscuous_pkt_type_t type)
     /* addr2, the transmitter, sits at byte 10 of a management or data frame; control frames may have no
      * such address, and a frame whose checksum failed cannot be trusted to carry one (its air time still
      * counts: the medium was busy). */
-    const uint8_t *a2 = (r->rx_state == 0 && r->sig_len >= 16 &&
-                         (type == WIFI_PKT_MGMT || type == WIFI_PKT_DATA)) ? p->payload + 10 : NULL;
+    bool readable = r->rx_state == 0 && (type == WIFI_PKT_MGMT || type == WIFI_PKT_DATA);
+    const uint8_t *a2 = (readable && r->sig_len >= 16) ? p->payload + 10 : NULL;
+    const uint8_t *bss = readable ? frame_bssid(p->payload, (uint16_t)r->sig_len) : NULL;
     survey_frame((uint8_t)r->channel, (int8_t)r->rssi, (int8_t)r->noise_floor,
                  survey_airtime_us((uint8_t)r->sig_mode, (uint8_t)r->rate, (uint8_t)r->mcs, r->sgi,
-                                   (uint16_t)r->sig_len), a2);
+                                   (uint16_t)r->sig_len), a2, bss);
 }
 
 /* Put the radio back the way it was. */
@@ -797,20 +817,24 @@ static uint8_t survey_begin_radio(uint16_t dwell, uint16_t mask)
         return SBP_RESP_ERR_RUNTIME;
     dwell = survey_clamp_dwell(dwell);
     mask = survey_clamp_mask(mask);
-    uint8_t home = 0;
+    uint8_t home = 0, own[6] = { 0 };
+    bool has_own = false;
     wifi_ap_record_t ap;
     wifi_config_t wc;
     if (s_ap) {
         if (esp_wifi_get_config(WIFI_IF_AP, &wc) == ESP_OK)
             home = wc.ap.channel;
+        has_own = esp_wifi_get_mac(WIFI_IF_AP, own) == ESP_OK; /* an access point's BSSID is its own MAC */
         /* an access point has no station to sweep with: give it one for the sweep */
         if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK)
             return SBP_RESP_ERR_RUNTIME;
         SV.mode_back = true;
     } else if (S.st == ST_CONNECTED && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         home = ap.primary;
+        memcpy(own, ap.bssid, sizeof own);
+        has_own = true;
     }
-    survey_begin(mask, dwell, home);
+    survey_begin(mask, dwell, home, has_own ? own : NULL);
     const wifi_promiscuous_filter_t filt = {
         .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA |
                        WIFI_PROMIS_FILTER_MASK_CTRL | WIFI_PROMIS_FILTER_MASK_MISC |

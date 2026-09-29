@@ -428,10 +428,6 @@ int sbpdev_handle(const sbp_frame_t *f)
             sbpdev_ack(f, SBP_RESP_OK);
             ota_boot_request();
         } else if (ver == 1) {                      /* run firmware: boots a received, validated image */
-            if (s_reply.kind == CH_NET) {
-                sbpdev_ack(f, SBP_RESP_ERR_RUNTIME); /* firmware only over a UART: see ID_UPDATE */
-                return 0;
-            }
             bool reboot;
             sbpdev_ack(f, ota_run_request(&reboot));
             if (reboot)
@@ -441,12 +437,12 @@ int sbpdev_handle(const sbp_frame_t *f)
         }
         return 0;
     case SBP_ID_UPDATE:
-        /* SBP has no authentication and the image is not signed: a new firmware is accepted only from
-         * a UART line (physical access), never from a network peer (docs/UPDATE.md). */
-        if (s_reply.kind == CH_NET)
-            sbpdev_ack(f, SBP_RESP_ERR_RUNTIME);
-        else
-            ota_on_update(f);
+        /* From 0.17 a network peer may replace the firmware too (the owner's decision of 2026-09-29: a
+         * module on a boat is hard to reach with a cable). What this costs: SBP has no authentication and
+         * the image is not signed, so anyone who can reach the module's network can reflash it - the Wi-Fi
+         * password is the only thing in the way (docs/UPDATE.md, SECURITY.md). The image is still checked
+         * before it is booted and rolled back if it cannot talk to a host (ota.c). */
+        ota_on_update(f);
         return 0;
     default:
         return -1;

@@ -10,7 +10,7 @@ on the wires is trusted. Know these properties before you deploy it anywhere els
 | **Kogger SBP has no authentication.** The "key" `0xC96B5D4A` in dangerous settings is a public constant that guards against accidental writes, not against attackers | anyone who can send frames to the module can change its settings |
 | **The module accepts control frames from the network** on the port of every open UART line ([docs/NETWORK.md](docs/NETWORK.md) §5) | any client of the Wi‑Fi network can reconfigure the module, reboot it, change its role, and talk to the devices on its UART lines |
 | **Firmware images are not signed** | the module accepts any correctly built image of this project |
-| **Updates are accepted only over a wired line** (UART or native USB, since 0.11) | a network client cannot replace the firmware; a person with physical access can |
+| **Updates are accepted over the network too** (0.17; 0.11–0.16 took them only over a wire) | anyone who can reach the module's network can replace its firmware, so the Wi-Fi password is what protects it: change the factory one. The image is still validated before it is booted and rolled back if it cannot talk to a host |
 | **The factory network `KoggerBridge` / `KoggerBridge` is public** (it is in this repository; before 0.13 the access point default was `kogger1234`) | an access point left on defaults is open to anyone in radio range, and a station on factory settings joins anyone's network of that name and relays its lines there; a product can build with other `WB_FACTORY_SSID` / `WB_FACTORY_PASS` |
 | Saved Wi‑Fi passwords are never sent out, over SBP or the text protocol | they can still be read from flash by someone with physical access (no flash encryption) |
 

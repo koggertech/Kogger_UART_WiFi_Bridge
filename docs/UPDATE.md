@@ -107,6 +107,14 @@ bridges (then its bridging address, 87 by default). An update that moves the add
 0.12 at 87, is followed. A 0.12 module also leaves its address for a 0.11 image at the reboot, so a rollback to 0.11
 comes back where the host talks to it.
 
+**A network peer may update the firmware (0.17).** Until 0.16 `ID_UPDATE` and `ID_BOOT` v1 from a network peer were
+refused: SBP has no authentication and the image is not signed, so a wire meant physical access. From 0.17 they are
+accepted, because a module in the field can be hard to reach with a cable (the owner's decision, 2026-09-29). What it
+means: anyone who can reach the module's network can replace its firmware, and the Wi-Fi password is the only thing in
+the way - so do not leave the factory password on a module that matters ([SECURITY.md](../SECURITY.md)). The image is
+still checked before it is booted, and rolled back if it cannot talk to a host. A module has to be updated over a wire
+once to reach 0.17; only then can the ones after that come over the air.
+
 **Do not switch the relay off to make SLIP answer.** On 0.7.0/0.8.0 a module with the relay off and Wi‑Fi connected
 reboots every ~10 s ([RELAY.md](RELAY.md)).
 

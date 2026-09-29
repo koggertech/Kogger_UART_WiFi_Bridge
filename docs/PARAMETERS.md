@@ -1,6 +1,6 @@
 # Parameters
 
-Every setting of firmware 0.16.0 with its default and range, the build options, the timing constants and the buffers.
+Every setting of firmware 0.17.0 with its default and range, the build options, the timing constants and the buffers.
 The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, `sdkconfig.defaults`,
 `partitions.csv`); the file is named where it helps.
 

@@ -343,16 +343,19 @@ def parse_survey(p):
     """ID_WIFI_SURVEY CONTENT v0: one channel of the last sweep (or {0, 0} = no sweep yet).
 
     busy is the air time of the frames heard over the time spent on the channel, per mille: Wi-Fi traffic
-    only, without the gaps and the acknowledgements, so it is a floor. rssi -128 = nothing was heard."""
+    only, without the gaps and the acknowledgements, so it is a floor. rssi -128 = nothing was heard.
+    own (0.17) is how much of busy is the module's own network: subtract it to compare channels."""
     if len(p) == 2:
         return dict(index=p[0], total=p[1])
     if len(p) < 14:
         raise ValueError('bad v0 length %d' % len(p))
     dwell, busy, frames, senders = struct.unpack('<HHHH', p[3:11])
-    return dict(index=p[0], total=p[1], channel=p[2], dwell_ms=dwell, busy_permille=busy, frames=frames,
-                senders=senders, rssi=struct.unpack('b', p[11:12])[0],
-                noise=struct.unpack('b', p[12:13])[0],
-                flags={n: bool(p[13] & (1 << i)) for i, n in enumerate(SURVEY_FLAGS)})
+    d = dict(index=p[0], total=p[1], channel=p[2], dwell_ms=dwell, busy_permille=busy, frames=frames,
+             senders=senders, rssi=struct.unpack('b', p[11:12])[0], noise=struct.unpack('b', p[12:13])[0],
+             flags={n: bool(p[13] & (1 << i)) for i, n in enumerate(SURVEY_FLAGS)})
+    if len(p) >= 16:
+        d['own_permille'] = struct.unpack('<H', p[14:16])[0]
+    return d
 
 
 def parse_port(p):

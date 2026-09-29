@@ -3,6 +3,22 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.17.0 — 2026‑09‑29
+
+- **The channel survey reports the module's own network apart** (`ID_WIFI_SURVEY` CONTENT v0 is 16 bytes, was 14):
+  how much of a channel's busy figure belongs to the module's own link, taken from the BSSID of each frame. A host
+  choosing a channel subtracts it from its own channel instead of guessing how much of the traffic is its own.
+- **A network peer may update the firmware** (the owner's decision): `ID_UPDATE` and `ID_BOOT` v1 from the network are
+  no longer refused, because a module in the field can be hard to reach with a cable. The cost is plain: SBP has no
+  authentication and the image is not signed, so the Wi‑Fi password is what protects a module from being reflashed by
+  anyone in range - do not leave the factory password on one that matters ([SECURITY.md](SECURITY.md)). The image is
+  still validated before it is booted and rolled back if it cannot talk to a host, and a module still has to be
+  updated over a wire once to reach 0.17.
+
+Builds (UART and USB) without warnings; PC tests 89/89. Verified on a module in the station role: the survey with the
+own-network share. Not verified on hardware: an update over the network (it needs a second module on that network), and
+the survey in the access-point role.
+
 ## 0.16.0 — 2026‑09‑29
 
 - **How busy each channel is** (`ID_WIFI_SURVEY` 0x59), so that an access point on a boat can be put on a quiet

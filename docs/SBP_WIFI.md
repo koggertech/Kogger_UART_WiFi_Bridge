@@ -346,12 +346,21 @@ acknowledgements. It is a floor, not the true occupancy, and it is better labell
   for the sweep (an access point has no station to sweep with) and switches back; clients and a station's link survive
   the pause, since the radio returns to its own channel for 30 ms between channels.
 - **GETTING v0** sends the results of the last sweep again; ERR_RUNTIME while a sweep runs (its numbers are partial).
-- **CONTENT v0**, one frame per measured channel, 14 bytes: `U1 index, U1 total, U1 channel, U2 dwell ms,
-  U2 busy per mille, U2 frames, U2 transmitters, S1 strongest RSSI, S1 noise floor dBm, U1 flags`.
+- **CONTENT v0**, one frame per measured channel, 16 bytes (14 before 0.17): `U1 index, U1 total, U1 channel,
+  U2 dwell ms, U2 busy per mille, U2 frames, U2 transmitters, S1 strongest RSSI, S1 noise floor dBm, U1 flags,
+  U2 of the busy figure that is the module's own network (0.17)`.
   Without a sweep, one `{0, 0}` frame, as a scan does.
   - "Transmitters" is how many distinct *addr2* addresses were heard (up to 24 per channel); a control frame may carry
     none, and a frame whose checksum failed cannot be trusted to carry one - its air time still counts.
   - RSSI -128 means nothing was heard on that channel.
+  - **The own network's share** (0.17) is the part of busy that belongs to the module's own network: frames whose
+    BSSID is its own (its MAC as an access point, the access point's as a station), taken from addr1, addr2 or addr3
+    by the DS bits. A host choosing a channel subtracts it instead of guessing how much of the traffic is its own
+    link. The module's own transmissions are not in it - a radio does not hear itself (*inference*) - but in the
+    access-point role the uplink of its clients is.
+  - The own network shows up **on more than its own channel**: 2.4 GHz channels are 20 MHz wide and 5 MHz apart, so a
+    radio parked on one hears its neighbours (measured 2026-09-29: 6.0 % on its own channel 10, 1.4 % on channel 9).
+    Subtracting this field is right on every channel, not only the module's own: moving takes that traffic along.
   - Flags: bit0 the module's own channel (its own traffic is in the figures), bit1 an access point of this module may
     use this channel (1…11), bit2 **the noise floor never changed during the sweep, so do not trust it** (show it only
     when this bit is clear).

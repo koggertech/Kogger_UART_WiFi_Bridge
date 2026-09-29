@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.16.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.17.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.16.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.17.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,14 +62,14 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.16.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.17.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
 <p>Firmware for a small ESP32‑C3‑MINI‑1U board that puts serial devices on Wi‑Fi. Two UART lines are relayed to UDP ports
 or TCP clients as <b>whole protocol frames</b> (Kogger SBP KP1/KP2, u‑blox UBX, MAVLink 1/2). The module itself is a
 <b>Kogger SBP device</b> (board ID 87), configured and monitored by any SBP host from either port (X1 or X2) or over the
-network, found by KoggerApp's usual device search, and updated over a wired line with the exchange KoggerApp uses for
+network, found by KoggerApp's usual device search, and updated from a wire or the network with the exchange KoggerApp uses for
 Kogger devices. It reports what it sees on each port. It works as a Wi‑Fi <b>station</b> or runs its own <b>access point</b> with a DHCP server.
 An optional <b>IP bridge</b> (SLIP + NAT) gives a Linux host without Wi‑Fi an IP route through the module.</p>
 
@@ -85,7 +85,7 @@ An optional <b>IP bridge</b> (SLIP + NAT) gives a Linux host without Wi‑Fi an 
   <li>Answers discovery (<code>ID_VERSION</code> to address 0); replies go back on the request's channel</li>
   <li>Port information: which port the host is on, what is connected to each, devices heard, traffic by protocol</li>
   <li>Radio control: power 2–20 dBm, b/g/n, 20/40 MHz, LR, power save</li>
-  <li>Safe update over the wire: A/B slots, SHA‑256, automatic rollback</li>
+  <li>Safe update from a wire or the network (0.17): A/B slots, SHA‑256, automatic rollback</li>
   <li>Link report with Wi‑Fi traffic and the last reset reason</li>
 </ul>
 </div>
@@ -116,7 +116,7 @@ laptops on its own network.</p>
   <tr><td class="k">Serial throughput</td><td>baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud, 400 KB/s at 4 Mbaud</td></tr>
   <tr><td class="k">Relay</td><td>KP1, KP2, UBX, MAVLink 1/2 (392 messages); frames ≤ 4096 B; packets ≤ 512 B; 24‑packet pool</td></tr>
   <tr><td class="k">Control protocol</td><td>Kogger SBP (KP1): <code>ID_WIFI</code> 0x57, <code>ID_WIFI_NET</code> 0x58, common device IDs; IP bridge text commands over SLIP</td></tr>
-  <tr><td class="k">Firmware update</td><td>over SBP on a wired line; two 1.875 MiB slots; confirmation after 60 s, rollback at 180 s</td></tr>
+  <tr><td class="k">Firmware update</td><td>over SBP, from a wire or the network (0.17); two 1.875 MiB slots; confirmation after 60 s, rollback at 180 s</td></tr>
   <tr><td class="k">Firmware image</td><td>0.93 MB (47 % of a slot), ESP‑IDF 5.5.5</td></tr>
   <tr><td class="k">Board</td><td>20 × 30 mm, 4 layers FR4 1.2 mm, ENIG; two JST GH 4‑pin connectors; KiCad 10 project in <code>hardware/</code></td></tr>
   <tr><td class="k">Supply</td><td>4.5–24 V on X1 pin 4 (reverse‑polarity diode, TI LMZM23601 3.3 V / 1 A module); consumption not measured</td></tr>
@@ -268,7 +268,7 @@ the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Fu
   <tr><td><code>ID_MARK</code> 0x21</td><td>v0 {U1 mark}</td><td>v0 {KEY}: sets the mark bit (cleared by a reboot and by <code>ID_BOOT</code> v0)</td></tr>
   <tr><td><code>ID_FLASH</code> 0x23</td><td>—</td><td>{KEY}: v0 confirm and save the rates of both ports and the report period; v1 reload the saved period; v2 erase</td></tr>
   <tr><td><code>ID_BOOT</code> 0x24</td><td>—</td><td>v0 {KEY}: reboot after the 5 s update window; v1 {KEY}: check the received image and boot it</td></tr>
-  <tr><td><code>ID_UPDATE</code> 0x25</td><td>—</td><td>v0 {U2 chunk number, ≤ 253 data bytes}; wired lines only</td></tr>
+  <tr><td><code>ID_UPDATE</code> 0x25</td><td>—</td><td>v0 {U2 chunk number, ≤ 253 data bytes}; from a wire or the network (0.17)</td></tr>
 </table>
 
 <h3><code>ID_WIFI</code> = 0x57</h3>
@@ -306,10 +306,10 @@ the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Fu
 <h3><code>ID_WIFI_SURVEY</code> = 0x59 (0.16)</h3>
 <p>How busy each channel is, to put an access point on a quiet one. <code>SETTING v0 {KEY, U2 dwell ms, U2 channel
 mask}</code> sweeps the channels (1–11, 50–1000 ms each, 120 by default) and answers OK at once;
-<code>GETTING v0</code> repeats the last results. <code>CONTENT v0</code>, one per channel, 14 bytes: index, total,
+<code>GETTING v0</code> repeats the last results. <code>CONTENT v0</code>, one per channel, 16 bytes: index, total,
 channel, dwell, <b>busy per mille</b> (air time of the Wi-Fi frames heard, without gaps or acknowledgements: a floor),
 frames, transmitters, strongest RSSI, noise floor, flags (own channel, usable by an access point, noise not to be
-trusted).</p>
+trusted) and how much of the busy figure is the module's own network.</p>
 
 <h3><code>ID_WIFI_NET</code> = 0x58 (every SETTING starts with the key)</h3>
 <table>

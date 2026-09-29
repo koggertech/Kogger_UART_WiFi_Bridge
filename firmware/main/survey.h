@@ -28,7 +28,7 @@
 #define SURVEY_DWELL_MAX   1000
 #define SURVEY_DWELL_DEF   120    /**< default time on one channel, ms */
 #define SURVEY_SENDERS_MAX 24     /**< distinct transmitters remembered per channel */
-#define SURVEY_PAGE_LEN    14     /**< bytes of one CONTENT v0 page */
+#define SURVEY_PAGE_LEN    16     /**< bytes of one CONTENT v0 page (14 before 0.17) */
 
 /* Flags, byte 13 of a page. */
 #define SURVEY_F_HOME      0x01   /**< the module's own channel: its own traffic is in the figures */
@@ -49,8 +49,13 @@ uint16_t survey_clamp_dwell(uint16_t ms);
 /** The channels the module will measure: bit0 = channel 1 … bit12 = channel 13, 0 = every channel. */
 uint16_t survey_clamp_mask(uint16_t mask);
 
-/** Start: clears the results. `home` is the channel the module itself is on (0 if none). */
-void survey_begin(uint16_t mask, uint16_t dwell_ms, uint8_t home);
+/**
+ * Start: clears the results. `home` is the channel the module itself is on (0 if none), `own_bssid` the
+ * BSSID of the module's own network (its own MAC as an access point, the access point's as a station,
+ * NULL when it has none): the air time of that network is counted apart, so that a host choosing a
+ * channel can take its own traffic out of the figure instead of guessing it.
+ */
+void survey_begin(uint16_t mask, uint16_t dwell_ms, uint8_t home, const uint8_t *own_bssid);
 
 /** Manager: the radio has spent `ms` on `channel` (may be called again to add more time). */
 void survey_dwell_done(uint8_t channel, uint16_t ms);
@@ -58,9 +63,11 @@ void survey_dwell_done(uint8_t channel, uint16_t ms);
 /**
  * Promiscuous callback: one frame heard on `channel`. `air_us` is survey_airtime_us(), `noise` the
  * radio's noise floor, `addr2` the transmitter's address or NULL when the frame has none (a control
- * frame, or a frame whose checksum failed - its air time still counts).
+ * frame, or a frame whose checksum failed - its air time still counts). `bssid` is the network the frame
+ * belongs to, or NULL when it has none or cannot be trusted.
  */
-void survey_frame(uint8_t channel, int8_t rssi, int8_t noise, uint32_t air_us, const uint8_t *addr2);
+void survey_frame(uint8_t channel, int8_t rssi, int8_t noise, uint32_t air_us, const uint8_t *addr2,
+                  const uint8_t *bssid);
 
 /** How many measured channels there are to report (those the radio really visited). */
 int survey_total(void);
@@ -68,6 +75,7 @@ int survey_total(void);
 /**
  * Page `index` of `survey_total()` into `out` (SURVEY_PAGE_LEN bytes), the payload of CONTENT v0:
  * U1 index, U1 total, U1 channel, U2 dwell ms, U2 busy per mille, U2 frames, U2 transmitters,
- * S1 strongest RSSI, S1 noise floor dBm, U1 flags. False when there is no such page.
+ * S1 strongest RSSI, S1 noise floor dBm, U1 flags, U2 of the busy figure that is the module's own network
+ * (0.17). False when there is no such page.
  */
 bool survey_page(int index, uint8_t *out);

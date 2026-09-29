@@ -59,6 +59,7 @@ uint16_t survey_clamp_mask(uint16_t mask)
 
 typedef struct {
     uint32_t air_us;
+    uint32_t own_us;   /* of air_us, the module's own network */
     uint16_t frames;
     int8_t   rssi_max;
     uint8_t  nsend;
@@ -71,6 +72,7 @@ typedef struct {
 static chan_t   s_ch[SURVEY_CH_MAX];               /* the promiscuous callback's */
 static uint16_t s_dwell[SURVEY_CH_MAX];            /* the manager's */
 static uint8_t  s_home;
+static uint8_t  s_own[6];                          /* the module's own BSSID, all zero when it has none */
 
 static uint32_t hash6(const uint8_t *a)
 {
@@ -82,7 +84,7 @@ static uint32_t hash6(const uint8_t *a)
     return h;
 }
 
-void survey_begin(uint16_t mask, uint16_t dwell_ms, uint8_t home)
+void survey_begin(uint16_t mask, uint16_t dwell_ms, uint8_t home, const uint8_t *own_bssid)
 {
     (void)mask;
     (void)dwell_ms;
@@ -91,6 +93,10 @@ void survey_begin(uint16_t mask, uint16_t dwell_ms, uint8_t home)
     for (int i = 0; i < SURVEY_CH_MAX; i++)
         s_ch[i].rssi_max = -128;
     s_home = home;
+    if (own_bssid)
+        memcpy(s_own, own_bssid, 6);
+    else
+        memset(s_own, 0, sizeof s_own);
 }
 
 void survey_dwell_done(uint8_t channel, uint16_t ms)
@@ -101,12 +107,15 @@ void survey_dwell_done(uint8_t channel, uint16_t ms)
     s_dwell[channel - 1] = (uint16_t)(sum > 0xFFFF ? 0xFFFF : sum);
 }
 
-void survey_frame(uint8_t channel, int8_t rssi, int8_t noise, uint32_t air_us, const uint8_t *addr2)
+void survey_frame(uint8_t channel, int8_t rssi, int8_t noise, uint32_t air_us, const uint8_t *addr2,
+                  const uint8_t *bssid)
 {
     if (channel < SURVEY_CH_MIN || channel > SURVEY_CH_MAX)
         return;
     chan_t *c = &s_ch[channel - 1];
     c->air_us += air_us;
+    if (bssid && !memcmp(bssid, s_own, 6))
+        c->own_us += air_us;
     if (c->frames < 0xFFFF)
         c->frames++;
     if (rssi > c->rssi_max)
@@ -171,6 +180,9 @@ bool survey_page(int index, uint8_t *out)
     uint32_t busy = c->air_us / dwell; /* air time per mille: us heard / (ms * 1000) * 1000 */
     if (busy > 1000)
         busy = 1000;
+    uint32_t own = c->own_us / dwell;
+    if (own > busy)
+        own = busy;
     uint8_t flags = 0;
     if (s_home == ch + 1)
         flags |= SURVEY_F_HOME;
@@ -193,5 +205,7 @@ bool survey_page(int index, uint8_t *out)
     out[11] = (uint8_t)c->rssi_max;
     out[12] = (uint8_t)(int8_t)noise;
     out[13] = flags;
+    out[14] = (uint8_t)own;
+    out[15] = (uint8_t)(own >> 8);
     return true;
 }
