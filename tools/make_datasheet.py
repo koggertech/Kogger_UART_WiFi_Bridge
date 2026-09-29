@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CANDIDATES = ['msedge', 'microsoft-edge', 'google-chrome', 'chrome', 'chromium', 'chromium-browser',
@@ -100,8 +101,17 @@ def main():
         r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=180)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
+    # The browser writes the file from a process of its own, and the one we started may exit before that
+    # is done (Edge 154 does), so wait for the file to appear and stop growing instead of looking once.
+    size = -1
+    for _ in range(120):
+        now = os.path.getsize(pdf) if os.path.isfile(pdf) else -1
+        if now > 0 and now == size:
+            break
+        size = now
+        time.sleep(0.5)
     if not os.path.isfile(pdf) or open(pdf, 'rb').read(5) != b'%PDF-':
-        sys.exit('printing failed (exit %d):\n%s' % (r.returncode, r.stdout[-2000:]))
+        sys.exit('printing failed (exit %d), no PDF at %s:\n%s' % (r.returncode, pdf, r.stdout[-2000:]))
     data = open(pdf, 'rb').read()
     pages = len(re.findall(rb'/Type\s*/Page[^s]', data))
     print('%s  %d bytes  %d pages' % (pdf, len(data), pages))

@@ -3,6 +3,26 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.16.0 — 2026‑09‑29
+
+- **How busy each channel is** (`ID_WIFI_SURVEY` 0x59), so that an access point on a boat can be put on a quiet
+  channel. `SETTING v0 {KEY, U2 dwell ms, U2 channel mask}` sweeps the channels with a passive scan and counts, in
+  promiscuous mode, the air time of every frame it hears; `GETTING v0` repeats the last results; `CONTENT v0` reports
+  each channel: busy per mille, frames, distinct transmitters, the strongest RSSI, the noise floor and flags
+  ([docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4a). In the access‑point role the module lends itself a station for the sweep
+  and switches back; between channels the radio returns to its own channel for 30 ms, so a link holds.
+- **Busy is Wi‑Fi air time only** — not the gaps, not the acknowledgements, and not interference that is not Wi‑Fi
+  (the chip has no public channel‑busy counter). It is a floor. The module's own channel counts the time the radio
+  spent back on it between channels, or its own link would read as a full channel.
+- The noise floor of this chip did not move at all during a sweep, so every page carries a flag that says not to
+  trust it; a host should show the figure only when that flag is clear.
+- A new id rather than a ninth version of `ID_WIFI`: a version in SBP has three bits and all eight were taken.
+
+Builds (UART and USB) without warnings; PC tests 86/86 (20 of them the survey's arithmetic and pages). Verified on a
+module in the station role: a sweep of 11 channels and its pages, the dwell, the flags, the same results from
+`GETTING`, the refusals (no key, short payload, second sweep), and the Wi‑Fi link back afterwards. Not verified yet:
+the access‑point role (it needs a second module on a wire).
+
 ## 0.15.0 — 2026‑09‑28
 
 - **A port rate is saved at once**, also when the request came through that very port (`ID_UART` v0). Up to 0.14 such

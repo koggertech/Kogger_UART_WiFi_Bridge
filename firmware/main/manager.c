@@ -32,6 +32,7 @@
 #include "relay.h"
 #include "sbp.h"
 #include "sbpdev.h"
+#include "survey.h"
 #include "wifiap.h"
 #include "wifistat.h"
 
@@ -105,6 +106,23 @@ static struct {
     int      nknown;
     uint32_t seq;
 } S;
+
+/* ---- channel survey (survey.h, docs/SBP_WIFI.md 4a) ---------------------------------------- */
+
+#define SURVEY_HOME_MS  30                    /* back to the own channel between channels, so a link holds */
+#define SURVEY_SLACK_US (4 * 1000 * 1000)     /* the sweep may take this much longer than the dwell times */
+
+static struct {
+    bool        on;
+    bool        for_sbp;      /* a SETTING is waiting for the results */
+    uint16_t    mask;
+    uint16_t    dwell;
+    bool        promisc;
+    bool        mode_back;    /* the access point was switched to AP+station for the sweep */
+    uint8_t     home;         /* the module's own channel, 0 when it has none */
+    sbp_chan_t  ch;           /* where the results go */
+    int64_t     deadline;
+} SV;
 
 static QueueHandle_t s_q;
 static volatile uint32_t s_req_drops; /* requests dropped for a full queue: ID_WIFI v1 (room_for_request) */
@@ -693,6 +711,157 @@ static int request_scan(void)
     return scan_start() ? 0 : -1;
 }
 
+/* Promiscuous callback, Wi-Fi task: one frame heard. Only survey_frame() is touched here. */
+static void survey_rx(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    const wifi_promiscuous_pkt_t *p = buf;
+    const wifi_pkt_rx_ctrl_t *r = &p->rx_ctrl;
+    /* addr2, the transmitter, sits at byte 10 of a management or data frame; control frames may have no
+     * such address, and a frame whose checksum failed cannot be trusted to carry one (its air time still
+     * counts: the medium was busy). */
+    const uint8_t *a2 = (r->rx_state == 0 && r->sig_len >= 16 &&
+                         (type == WIFI_PKT_MGMT || type == WIFI_PKT_DATA)) ? p->payload + 10 : NULL;
+    survey_frame((uint8_t)r->channel, (int8_t)r->rssi, (int8_t)r->noise_floor,
+                 survey_airtime_us((uint8_t)r->sig_mode, (uint8_t)r->rate, (uint8_t)r->mcs, r->sgi,
+                                   (uint16_t)r->sig_len), a2);
+}
+
+/* Put the radio back the way it was. */
+static void survey_stop_radio(void)
+{
+    if (SV.promisc) {
+        esp_wifi_set_promiscuous(false);
+        SV.promisc = false;
+    }
+    if (SV.mode_back) {
+        esp_wifi_set_mode(WIFI_MODE_AP);
+        SV.mode_back = false;
+    }
+    SV.on = false;
+}
+
+/* The results (or {0, 0}) to whoever asked; the current channel is restored afterwards, like a scan. */
+static void survey_answer(const sbp_chan_t *to)
+{
+    sbp_chan_t cur;
+    sbpdev_channel(&cur);
+    sbpdev_set_channel(to);
+    int n = survey_total();
+    if (n == 0) {
+        const uint8_t none[2] = { 0, 0 };
+        sbpdev_send(SBP_T_CONTENT, 0, SBP_ID_WIFI_SURVEY, none, sizeof none);
+    }
+    for (int i = 0; i < n; i++) {
+        uint8_t page[SURVEY_PAGE_LEN];
+        if (survey_page(i, page))
+            sbpdev_send(SBP_T_CONTENT, 0, SBP_ID_WIFI_SURVEY, page, sizeof page);
+    }
+    sbpdev_set_channel(&cur);
+}
+
+/* Every channel of the mask got the same dwell - except the module's own channel, where the radio also
+ * came back for SURVEY_HOME_MS between two channels, so that a link would hold. Without that time in the
+ * denominator its own channel reads far busier than it is (its whole link runs during those returns). */
+static void survey_credit_dwell(void)
+{
+    int n = 0;
+    for (int ch = SURVEY_CH_MIN; ch <= SURVEY_CH_MAX; ch++)
+        if (SV.mask & (1u << (ch - 1)))
+            n++;
+    for (int ch = SURVEY_CH_MIN; ch <= SURVEY_CH_MAX; ch++) {
+        if (!(SV.mask & (1u << (ch - 1))))
+            continue;
+        uint32_t ms = SV.dwell;
+        if (ch == SV.home && n > 1)
+            ms += (uint32_t)(n - 1) * SURVEY_HOME_MS;
+        survey_dwell_done((uint8_t)ch, (uint16_t)(ms > 0xFFFF ? 0xFFFF : ms));
+    }
+}
+
+static void survey_done(bool ok)
+{
+    survey_stop_radio();
+    if (ok)
+        survey_credit_dwell();
+    ESP_LOGI(TAG, "survey %s: %d channel(s)", ok ? "done" : "aborted", ok ? survey_total() : 0);
+    if (SV.for_sbp) {
+        SV.for_sbp = false;
+        survey_answer(&SV.ch);
+    }
+}
+
+/** The sweep the SBP request asked for; the answer is the response code. The radio moves only on OK. */
+static uint8_t survey_begin_radio(uint16_t dwell, uint16_t mask)
+{
+    if (SV.on || S.scanning || S.st == ST_CONNECTING)
+        return SBP_RESP_ERR_RUNTIME;
+    dwell = survey_clamp_dwell(dwell);
+    mask = survey_clamp_mask(mask);
+    uint8_t home = 0;
+    wifi_ap_record_t ap;
+    wifi_config_t wc;
+    if (s_ap) {
+        if (esp_wifi_get_config(WIFI_IF_AP, &wc) == ESP_OK)
+            home = wc.ap.channel;
+        /* an access point has no station to sweep with: give it one for the sweep */
+        if (esp_wifi_set_mode(WIFI_MODE_APSTA) != ESP_OK)
+            return SBP_RESP_ERR_RUNTIME;
+        SV.mode_back = true;
+    } else if (S.st == ST_CONNECTED && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        home = ap.primary;
+    }
+    survey_begin(mask, dwell, home);
+    const wifi_promiscuous_filter_t filt = {
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA |
+                       WIFI_PROMIS_FILTER_MASK_CTRL | WIFI_PROMIS_FILTER_MASK_MISC |
+                       WIFI_PROMIS_FILTER_MASK_FCSFAIL,
+    };
+    const wifi_promiscuous_filter_t ctrl = { .filter_mask = WIFI_PROMIS_CTRL_FILTER_MASK_ALL };
+    esp_wifi_set_promiscuous_filter(&filt);
+    esp_wifi_set_promiscuous_ctrl_filter(&ctrl);
+    esp_wifi_set_promiscuous_rx_cb(survey_rx);
+    if (esp_wifi_set_promiscuous(true) != ESP_OK) {
+        survey_stop_radio();
+        return SBP_RESP_ERR_RUNTIME;
+    }
+    SV.promisc = true;
+    int n = 0;
+    for (int ch = SURVEY_CH_MIN; ch <= SURVEY_CH_MAX; ch++)
+        if (mask & (1u << (ch - 1)))
+            n++;
+    wifi_scan_config_t sc = {
+        .show_hidden = true,
+        .scan_type = WIFI_SCAN_TYPE_PASSIVE,
+        .home_chan_dwell_time = SURVEY_HOME_MS,
+    };
+    sc.scan_time.passive = dwell;
+    sc.channel_bitmap.ghz_2_channels = (uint32_t)mask << 1; /* bit N of the driver = channel N */
+    if (esp_wifi_scan_start(&sc, false) != ESP_OK) {
+        survey_stop_radio();
+        return SBP_RESP_ERR_RUNTIME;
+    }
+    S.scanning = true;
+    S.scan_since = esp_timer_get_time();
+    SV.on = true;
+    SV.home = home;
+    SV.mask = mask;
+    SV.dwell = dwell;
+    SV.deadline = S.scan_since + (int64_t)n * (dwell + SURVEY_HOME_MS) * 1000 + SURVEY_SLACK_US;
+    ESP_LOGI(TAG, "survey: %d channel(s), %u ms each, home %u", n, (unsigned)dwell, (unsigned)home);
+    return SBP_RESP_OK;
+}
+
+/* Manager, every 500 ms in both roles: a sweep that never finished must not keep the radio. */
+static void survey_tick(void)
+{
+    if (!SV.on || esp_timer_get_time() < SV.deadline)
+        return;
+    ESP_LOGW(TAG, "survey never finished: dropped");
+    esp_wifi_scan_stop();
+    S.scanning = false;
+    survey_done(false);
+}
+
 /* ---- event handlers (driver context -> queue) -------------------------------- */
 
 static void post(msg_t *m)
@@ -833,6 +1002,11 @@ static void sbp_send_scan(const wifi_ap_record_t *recs, int n)
 static void on_scan_done(int status)
 {
     S.scanning = false;
+    if (SV.on) { /* the sweep's own scan: its results are the air time counted while it ran */
+        esp_wifi_clear_ap_list();
+        survey_done(status == 0);
+        return;
+    }
     uint16_t n = MAX_SCAN;
     wifi_ap_record_t *recs = calloc(MAX_SCAN, sizeof *recs);
     if (!recs || esp_wifi_scan_get_ap_records(&n, recs) != ESP_OK) {
@@ -1174,12 +1348,55 @@ static void sbp_wifi(const sbp_frame_t *f)
     }
 }
 
+/* ID_WIFI_SURVEY 0x59: SETTING v0 {KEY, U2 dwell ms, U2 channel mask} starts a sweep, GETTING v0 asks
+ * for the last results again (docs/SBP_WIFI.md 4a). */
+static void sbp_survey(const sbp_frame_t *f)
+{
+    if (sbp_ver(f->mode) != 0) {
+        sbpdev_ack(f, SBP_RESP_ERR_VERSION);
+        return;
+    }
+    if (sbp_type(f->mode) != SBP_T_SETTING) { /* GETTING: the last results */
+        if (SV.on) {
+            sbpdev_ack(f, SBP_RESP_ERR_RUNTIME); /* a sweep is running: its numbers are not complete */
+            return;
+        }
+        sbp_chan_t here;
+        sbpdev_channel(&here);
+        survey_answer(&here);
+        return;
+    }
+    if (f->len < 4 || sbp_get_u32(f->payload) != SBP_KEY_CONFIRM) {
+        sbpdev_ack(f, SBP_RESP_ERR_KEY); /* the sweep takes the radio away for seconds: not by accident */
+        return;
+    }
+    if (f->len < 8) {
+        sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
+        return;
+    }
+    if (SV.on || S.scanning || S.st == ST_CONNECTING) {
+        sbpdev_ack(f, SBP_RESP_ERR_RUNTIME);
+        return;
+    }
+    sbpdev_ack(f, SBP_RESP_OK); /* answered before the radio moves: the answer may go over that radio */
+    vTaskDelay(pdMS_TO_TICKS(200));
+    sbpdev_channel(&SV.ch);
+    SV.for_sbp = true;
+    uint8_t code = survey_begin_radio(sbp_get_u16(f->payload + 4), sbp_get_u16(f->payload + 6));
+    if (code != SBP_RESP_OK) {
+        ESP_LOGW(TAG, "survey not started (%u)", code);
+        survey_done(false); /* an empty answer: the host is not left waiting */
+    }
+}
+
 static void handle_sbp(const sbp_frame_t *f)
 {
     if (sbpdev_handle(f) == 0)
         return;
     if (f->id == SBP_ID_WIFI)
         sbp_wifi(f);
+    else if (f->id == SBP_ID_WIFI_SURVEY)
+        sbp_survey(f);
     else if (f->id == SBP_ID_WIFI_NET)
         netctl_handle(f);
     /* other ids: not ours, ignored like the sonars do */
@@ -1426,6 +1643,7 @@ static void manager_task(void *arg)
         }
         case M_OTA_TICK:
             ota_tick();
+            survey_tick();
             supervise();
             break;
         case M_SCAN_DONE:    on_scan_done(m.arg); break;

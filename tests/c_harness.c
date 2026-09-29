@@ -26,6 +26,7 @@
 #include "portinfo.h"
 #include "proto.h"
 #include "sbp.h"
+#include "survey.h"
 
 static uint32_t lcg = 12345;
 static uint8_t rnd(void)
@@ -115,6 +116,44 @@ int main(int argc, char **argv)
                     : a == BOOTKEY_LED_DARK ? '-' : '.');
         }
         putchar('\n');
+        return 0;
+    }
+    if (argc >= 2 && !strcmp(argv[1], "survey")) {
+        static char line[512], hx[64];
+        static uint8_t page[SURVEY_PAGE_LEN], mac[6];
+        while (fgets(line, sizeof line, stdin)) {
+            char cmd[16];
+            unsigned a = 0, b = 0, c = 0, d = 0, e = 0;
+            int r = 0, nz = 0;
+            if (sscanf(line, "%15s", cmd) != 1)
+                continue;
+            if (!strcmp(cmd, "air")) { /* sig_mode rate mcs sgi len */
+                sscanf(line, "%*s %u %u %u %u %u", &a, &b, &c, &d, &e);
+                printf("A %lu\n", (unsigned long)survey_airtime_us((uint8_t)a, (uint8_t)b, (uint8_t)c, d != 0,
+                                                                   (uint16_t)e));
+            } else if (!strcmp(cmd, "clamp")) { /* dwell mask */
+                sscanf(line, "%*s %u %u", &a, &b);
+                printf("C %u %u\n", survey_clamp_dwell((uint16_t)a), survey_clamp_mask((uint16_t)b));
+            } else if (!strcmp(cmd, "begin")) { /* mask dwell home */
+                sscanf(line, "%*s %u %u %u", &a, &b, &c);
+                survey_begin(survey_clamp_mask((uint16_t)a), (uint16_t)b, (uint8_t)c);
+            } else if (!strcmp(cmd, "dwell")) { /* channel ms */
+                sscanf(line, "%*s %u %u", &a, &b);
+                survey_dwell_done((uint8_t)a, (uint16_t)b);
+            } else if (!strcmp(cmd, "frame")) { /* ch rssi noise air_us [addr2] */
+                hx[0] = '\0';
+                sscanf(line, "%*s %u %d %d %u %63s", &a, &r, &nz, &b, hx);
+                int n = hx[0] ? unhex(hx, mac, sizeof mac) : 0;
+                survey_frame((uint8_t)a, (int8_t)r, (int8_t)nz, b, n == 6 ? mac : NULL);
+            } else if (!strcmp(cmd, "pages")) {
+                printf("N %d\n", survey_total());
+                for (int i = 0; survey_page(i, page); i++) {
+                    printf("P ");
+                    hex(page, sizeof page);
+                    printf("\n");
+                }
+            }
+        }
         return 0;
     }
     if (argc >= 2 && !strcmp(argv[1], "portinfo")) {

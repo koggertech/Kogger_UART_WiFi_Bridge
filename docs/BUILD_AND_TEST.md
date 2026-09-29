@@ -104,6 +104,9 @@ python tools/bench_sbp.py --port COM3 --write-test             # + a saved chang
   after a role change with reboot), then at its bridging address (88 after the switch to the access point) and finally at 0, 87
   and 88.
 - `bench_sbp.py` scans and briefly changes settings, so do not run it on a module that carries live traffic.
+- `tools/bench_survey.py --port COM3` checks the channel survey of 0.16 on hardware: a sweep and its pages, the
+  dwell and the flags, the same results from GETTING, and the refusals (no key, a short payload, a second sweep while
+  one runs). It takes the radio away for about two seconds, and changes no setting.
 - `tools/bench_ports.py --port COM3` checks the 0.12 port rules on the port it runs on (X1 or X2; `--baud` for another
   rate): discovery to 0 and 255, `ID_WIFI_NET` v7 pages, reports after a request, a rate change of this port
   (`ID_UART`) saved at once and kept 12 s without a request (0.15), `ID_WIFI_NET` v3 keeping this port's rate, the other port's

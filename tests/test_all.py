@@ -124,7 +124,7 @@ def build(tmp):
     kind, tool = find_compiler()
     srcs = [os.path.join(ROOT, 'tests', 'c_harness.c')] + [os.path.join(FW, f) for f in
                                                           ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c', 'portinfo.c',
-                                                           'bootkey.c')]
+                                                           'bootkey.c', 'survey.c')]
     exe = os.path.join(tmp, 'c_harness.exe' if os.name == 'nt' else 'c_harness')
     if kind == 'gcc':
         cmd = [tool, '-std=c99', '-O2', '-Wall', '-Wextra', '-Werror', '-I', FW, '-o', exe] + srcs
@@ -488,6 +488,63 @@ def bootkey_tests(exe):
     check('bootkey: after that a real press works', out.endswith('**R'), out[-5:])
 
 
+def survey_tests(exe):
+    """Channel survey arithmetic and pages (firmware/main/survey.c), read with host/sbpframe.parse_survey."""
+    def run(script):
+        return subprocess.run([exe, 'survey'], input=NL.join(script) + NL, stdout=subprocess.PIPE,
+                              text=True).stdout.split(NL)
+
+    def air(sig_mode, rate, mcs=0, sgi=0, length=100):
+        out = run(['air %d %d %d %d %d' % (sig_mode, rate, mcs, sgi, length)])
+        return int(out[0].split()[1])
+
+    # 11b at 1 Mbit/s: 192 us of long preamble + 8 bits per byte at 1 bit/us
+    check('survey: 11b 1 Mbit/s, 100 B -> 192 + 800 us', air(0, 0x00) == 992, str(air(0, 0x00)))
+    check('survey: 11b 11 Mbit/s short preamble, 100 B -> 96 + 73 us', air(0, 0x07) == 169, str(air(0, 0x07)))
+    # 11g 6 Mbit/s: 20 us + ceil((22 + 800) / 24) = 35 symbols of 4 us
+    check('survey: 11g 6 Mbit/s, 100 B -> 20 + 140 us', air(0, 0x0B) == 160, str(air(0, 0x0B)))
+    check('survey: 11g 54 Mbit/s is the shortest of the 11g rates', air(0, 0x0C) < air(0, 0x0B), str(air(0, 0x0C)))
+    # 11n MCS0 20 MHz: 36 us + ceil(822 / 26) = 32 symbols, 4 us each (long guard interval)
+    check('survey: 11n MCS0 long GI, 100 B -> 36 + 128 us', air(1, 0, 0, 0) == 164, str(air(1, 0, 0, 0)))
+    check('survey: the same with a short guard interval is shorter', air(1, 0, 0, 1) == 36 + 116,
+          str(air(1, 0, 0, 1)))
+    check('survey: MCS7 carries 10x MCS0 per symbol', air(1, 0, 7, 0) < air(1, 0, 0, 0), str(air(1, 0, 7, 0)))
+    check('survey: an unknown rate gives no air time', air(0, 0x04) == 0 and air(3, 0) == 0)
+
+    out = run(['clamp 0 0', 'clamp 10 %d' % (1 << 12), 'clamp 5000 3'])
+    got = [tuple(int(x) for x in l.split()[1:]) for l in out if l.startswith('C ')]
+    check('survey: dwell 0 = default %d, mask 0 = channels 1..%d' % (SB.SURVEY_DWELL_DEF, SB.SURVEY_CH_SCAN_MAX),
+          got[0] == (SB.SURVEY_DWELL_DEF, (1 << SB.SURVEY_CH_SCAN_MAX) - 1), str(got[0]))
+    check('survey: a dwell under the minimum is pulled up, channel 13 is dropped (the country forbids it)',
+          got[1] == (50, (1 << SB.SURVEY_CH_SCAN_MAX) - 1), str(got[1]))
+    check('survey: a dwell over the maximum is pulled down, a mask of real channels is kept',
+          got[2] == (1000, 3), str(got[2]))
+
+    script = ['begin 7 100 6', 'dwell 1 100', 'dwell 2 100', 'dwell 3 100',
+              'frame 1 -40 -95 20000 aabbccddeeff', 'frame 1 -60 -95 5000 aabbccddeeff',
+              'frame 1 -50 -90 5000 001122334455', 'frame 2 -70 -95 100 ',
+              'pages']
+    out = run(script)
+    pages = [SB.parse_survey(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')]
+    check('survey: 3 measured channels, one page each', len(pages) == 3 and pages[0]['total'] == 3, str(len(pages)))
+    p1 = pages[0]
+    check('survey: channel 1 busy 300 per mille (30 ms of air in 100 ms)', p1['busy_permille'] == 300, str(p1))
+    check('survey: 3 frames, 2 transmitters, strongest RSSI -40', p1['frames'] == 3 and p1['senders'] == 2
+          and p1['rssi'] == -40, str(p1))
+    check('survey: the noise floor is the average of the samples', p1['noise'] == -93, str(p1['noise']))
+    check('survey: channel 2 heard one frame, channel 3 nothing',
+          pages[1]['frames'] == 1 and pages[2]['frames'] == 0 and pages[2]['rssi'] == -128, str(pages[2]))
+    check('survey: the module own channel is flagged, and 1..11 as usable by an access point',
+          not p1['flags']['home'] and p1['flags']['ap_ok'] and pages[2]['flags']['home'] is False, str(p1['flags']))
+    check('survey: busy never exceeds 1000 per mille',
+          all(0 <= p['busy_permille'] <= 1000 for p in pages))
+
+    out = run(['begin 0 100 1', 'dwell 1 100', 'frame 1 -40 -95 1000 aabbccddeeff', 'pages'])
+    p = [SB.parse_survey(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')][0]
+    check('survey: one unchanging noise figure is flagged as not to be trusted', p['flags']['noise_bad'], str(p))
+    check('survey: the module own channel is flagged', p['flags']['home'], str(p['flags']))
+
+
 def portinfo_tests(exe):
     """ID_WIFI_NET v7 pages built by firmware/main/portinfo.c, read with host/sbpframe.parse_port."""
     def run(script):
@@ -565,6 +622,7 @@ def main():
         if exe:
             c_tests(exe, tmp)
             portinfo_tests(exe)
+            survey_tests(exe)
             bootkey_tests(exe)
     failed = [n for n, ok in results if not ok]
     print(NL + '%d checks, %d failed' % (len(results), len(failed)))

@@ -36,7 +36,7 @@ UDP. On the same port the module answers its own SBP address 87 and sends its Wi
 In the access‑point role the same board can be the boat‑side end: it bridges a sonar or autopilot
 UART to phones and laptops on its own network.
 
-## Key figures (firmware 0.15.0)
+## Key figures (firmware 0.16.0)
 
 | | |
 |---|---|
@@ -46,10 +46,10 @@ UART to phones and laptops on its own network.
 | Roles | station (default) or access point (open, WPA2, WPA2/WPA3; channels 1–11; up to 10 clients) |
 | Serial lines | X1 = UART0, X2 = UART1, equal for control and relay; 9600–5 000 000 baud, 8N1, set for each port; default 921600 on both |
 | Relay | per line: off, UDP (fixed peer, last ≤ 4 senders, or broadcast) or TCP client; frames up to 4096 B |
-| Control | Kogger SBP: `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 and the common device IDs, from any line or the network |
+| Control | Kogger SBP: `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59 and the common device IDs, from any line or the network |
 | Update | over SBP on a wired line; A/B slots of 1.875 MiB; SHA‑256 check; confirmation after 60 s, rollback at 180 s |
 | Factory settings | station knowing the network `KoggerBridge` (build options `WB_FACTORY_SSID` / `WB_FACTORY_PASS`), lines relaying to 10.0.0.10:14444 / 14445; BOOT held 5 s resets the port rates, 10 s every setting |
-| Image size | 0.94 MB, 48 % of a slot (0.15.0, UART build) |
+| Image size | 0.95 MB, 48 % of a slot (0.16.0, UART build) |
 | Serial throughput | baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud |
 
 The serial line, not Wi‑Fi, is the bottleneck at these rates. Measured figures, test conditions and charts
@@ -98,7 +98,7 @@ Flashing, the native‑USB variant and the bench checks are described in
 
 ## Status
 
-- **Verified on hardware (0.1–0.15):**
+- **Verified on hardware (0.1–0.16):**
   - SBP device checks;
   - baud rates 9600 to 2 Mbaud on a bench adapter, 2/3/4 Mbaud on a head unit's UART;
   - IP bridge through NAT;
@@ -116,8 +116,10 @@ Flashing, the native‑USB variant and the bench checks are described in
     (`tools/module_state.py`);
   - 0.14.0: 60 requests at once all answered (58 on 0.13), a mixed burst of ten request types answered in full;
   - 0.15.0: a port rate set through that very port saved at once and kept across a reboot; the BOOT 5 s press
-    restoring 921600 on both ports with every other setting kept.
-- **Not yet verified on hardware:** data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
+    restoring 921600 on both ports with every other setting kept;
+  - 0.16.0: a channel survey in the station role - 11 channels swept, the pages, the flags and the refusals
+    (`tools/bench_survey.py`), with the Wi-Fi link back afterwards.
+- **Not yet verified on hardware:** the channel survey in the access-point role; data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
   module updated from 0.12; two factory modules relaying to each other; the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
 
 The status of each release is in [CHANGELOG.md](CHANGELOG.md).

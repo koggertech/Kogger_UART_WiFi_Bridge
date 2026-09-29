@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.15.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.16.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.15.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.16.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,7 +62,7 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.15.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.16.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
@@ -302,6 +302,14 @@ the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Fu
   <tr><td>30–37</td><td>U4 receive, U4 transmit traffic, bytes per second</td></tr>
   <tr><td>38</td><td>U1 SSID length, then the SSID (up to 32 bytes)</td></tr>
 </table>
+
+<h3><code>ID_WIFI_SURVEY</code> = 0x59 (0.16)</h3>
+<p>How busy each channel is, to put an access point on a quiet one. <code>SETTING v0 {KEY, U2 dwell ms, U2 channel
+mask}</code> sweeps the channels (1–11, 50–1000 ms each, 120 by default) and answers OK at once;
+<code>GETTING v0</code> repeats the last results. <code>CONTENT v0</code>, one per channel, 14 bytes: index, total,
+channel, dwell, <b>busy per mille</b> (air time of the Wi-Fi frames heard, without gaps or acknowledgements: a floor),
+frames, transmitters, strongest RSSI, noise floor, flags (own channel, usable by an access point, noise not to be
+trusted).</p>
 
 <h3><code>ID_WIFI_NET</code> = 0x58 (every SETTING starts with the key)</h3>
 <table>

@@ -138,6 +138,8 @@ network on the port of any open line, in either role. It takes them even from a 
   other port's rate, or either from the network; every change is saved at once (up to 0.14 an `ID_UART` change was
   provisional and went back after 10 s without a request at the new rate). For the asking port's own line the v3 rate
   field is ignored. A rate a host cannot follow is undone with BOOT held 5 s ([SBP_WIFI.md](SBP_WIFI.md) §2, §4).
+- **How busy each channel is** (0.16): `ID_WIFI_SURVEY` 0x59 sweeps the channels and reports the air time of the
+  Wi-Fi frames it heard on each, so an access point can be put on a quiet one ([SBP_WIFI.md](SBP_WIFI.md) §4a).
 - **What is on each port** (0.12): `ID_WIFI_NET` v7 tells which port the request came through, the rates, whether a
   host, SBP devices, MAVLink, u‑blox or unreadable bytes are there, the devices heard (address, board, firmware;
   MAVLink system) and the network peers of the line ([SBP_WIFI.md](SBP_WIFI.md) §4.1).

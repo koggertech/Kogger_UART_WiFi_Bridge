@@ -13,6 +13,7 @@ RESP = {1: 'OK', 2: 'ERR_CHECK', 3: 'ERR_PAYLOAD', 4: 'ERR_ID', 5: 'ERR_VERSION'
 
 ID_UART, ID_VERSION, ID_MARK, ID_FLASH, ID_BOOT, ID_WIFI = 0x18, 0x20, 0x21, 0x23, 0x24, 0x57
 ID_WIFI_NET = 0x58
+ID_WIFI_SURVEY = 0x59
 BOARD_WIFI = 87      # board number of the module in ID_VERSION
 BOARD_WIFI = 87
 
@@ -323,6 +324,35 @@ def ports_payload(port=None, page=None):
 
 def _age(v):
     return None if v == 0xFFFF else v / 10.0
+
+
+SURVEY_DWELL_DEF = 120
+SURVEY_CH_SCAN_MAX = 11   # the driver's country lets the radio visit 1..11
+
+
+def survey_payload(dwell_ms=0, channels=0):
+    """ID_WIFI_SURVEY SETTING v0: start a sweep. dwell 0 = the module's default, channels 0 = all of them
+    (bit0 = channel 1 ... bit12 = channel 13)."""
+    return KEY + struct.pack('<HH', dwell_ms, channels)
+
+
+SURVEY_FLAGS = ['home', 'ap_ok', 'noise_bad']
+
+
+def parse_survey(p):
+    """ID_WIFI_SURVEY CONTENT v0: one channel of the last sweep (or {0, 0} = no sweep yet).
+
+    busy is the air time of the frames heard over the time spent on the channel, per mille: Wi-Fi traffic
+    only, without the gaps and the acknowledgements, so it is a floor. rssi -128 = nothing was heard."""
+    if len(p) == 2:
+        return dict(index=p[0], total=p[1])
+    if len(p) < 14:
+        raise ValueError('bad v0 length %d' % len(p))
+    dwell, busy, frames, senders = struct.unpack('<HHHH', p[3:11])
+    return dict(index=p[0], total=p[1], channel=p[2], dwell_ms=dwell, busy_permille=busy, frames=frames,
+                senders=senders, rssi=struct.unpack('b', p[11:12])[0],
+                noise=struct.unpack('b', p[12:13])[0],
+                flags={n: bool(p[13] & (1 << i)) for i, n in enumerate(SURVEY_FLAGS)})
 
 
 def parse_port(p):

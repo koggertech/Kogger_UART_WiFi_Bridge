@@ -1,6 +1,7 @@
 # The module as a Kogger SBP device
 
-Contract version 6 (firmware 0.15.0: every port rate change saved at once; version 5 = 0.14.0: rates up to
+Contract version 7 (firmware 0.16.0: `ID_WIFI_SURVEY` 0x59, how busy each channel is; version 6 = 0.15.0:
+every port rate change saved at once; version 5 = 0.14.0: rates up to
 5 000 000 baud since 0.13, `ID_WIFI` v1 of 27 bytes; version 4 = 0.12.0, version 3 = 0.11.0, version 2 = 0.10.0, version 1 = 0.2.0). Changes are summarised at the end of §3 and §4
 and in [CHANGELOG.md](../CHANGELOG.md). Implementation: `firmware/main/sbp.c`, `sbpdev.c`, `manager.c`, `netctl.c`,
 `ports.c`, `portinfo.c`. Python helpers (framing and most payloads): `host/sbpframe.py`. Bench checks:
@@ -328,6 +329,38 @@ or broadcast peer, or the senders a `senders` line answers.
 
 Bench check of all of this on hardware: `tools/bench_ports.py`.
 
+## 4a. `ID_WIFI_SURVEY` = 0x59 - how busy each channel is (firmware 0.16)
+
+So that an access point on a boat can be put on a quiet channel. The module sweeps the requested channels with a
+passive scan and, while it sweeps, counts every frame the radio hears in promiscuous mode. **Busy is the air time of
+those Wi-Fi frames over the time spent on the channel.** What it leaves out: interference that is not Wi-Fi (Bluetooth,
+a microwave oven - the chip has no public channel-busy (CCA) counter), the gaps between frames and the
+acknowledgements. It is a floor, not the true occupancy, and it is better labelled "Wi-Fi airtime" than "load".
+
+- **SETTING v0** `{KEY, U2 dwell ms, U2 channel mask}` starts a sweep. The key is required: the sweep takes the radio
+  away for seconds. Dwell 50…1000 ms, 0 = the default 120; anything outside is pulled to the ends. Mask: bit0 =
+  channel 1 … bit12 = channel 13, 0 = every channel. Answered at once with OK, and the radio leaves its channel after
+  that; ERR_KEY without the key, ERR_PAYLOAD below 8 bytes, ERR_RUNTIME while a sweep, a scan or a connection runs.
+  **Channels 12 and 13 are dropped**: the driver's country ("01") does not let the radio visit them, and a channel that
+  was never visited must not be reported as an empty one. In the access-point role the module switches to AP+station
+  for the sweep (an access point has no station to sweep with) and switches back; clients and a station's link survive
+  the pause, since the radio returns to its own channel for 30 ms between channels.
+- **GETTING v0** sends the results of the last sweep again; ERR_RUNTIME while a sweep runs (its numbers are partial).
+- **CONTENT v0**, one frame per measured channel, 14 bytes: `U1 index, U1 total, U1 channel, U2 dwell ms,
+  U2 busy per mille, U2 frames, U2 transmitters, S1 strongest RSSI, S1 noise floor dBm, U1 flags`.
+  Without a sweep, one `{0, 0}` frame, as a scan does.
+  - "Transmitters" is how many distinct *addr2* addresses were heard (up to 24 per channel); a control frame may carry
+    none, and a frame whose checksum failed cannot be trusted to carry one - its air time still counts.
+  - RSSI -128 means nothing was heard on that channel.
+  - Flags: bit0 the module's own channel (its own traffic is in the figures), bit1 an access point of this module may
+    use this channel (1…11), bit2 **the noise floor never changed during the sweep, so do not trust it** (show it only
+    when this bit is clear).
+- A full sweep is 11 x (dwell + 30 ms), about 1.7 s with the default. A sweep that has not finished by then plus 4 s is
+  dropped by the module itself and the radio comes back.
+
+Checks: the air-time arithmetic and the pages on the PC (`firmware/main/survey.c`, `tests/test_all.py`), the whole
+thing on hardware with `tools/bench_survey.py`.
+
 ## 5. X1: SBP and the IP bridge
 
 X1 also understands SLIP frames for the IP bridge ([PROTOCOL.md](PROTOCOL.md), daemon `host/espwifi_bridge.py`); X2
@@ -344,6 +377,8 @@ carries SBP only.
 
 ## 6. ID choice
 
-`ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 and board ID 87 were unused in KoggerApp when they were chosen
+`ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59 and board ID 87 were unused in KoggerApp when they
+were chosen. A version byte in SBP holds three bits, v0…v7, and all eight versions of `ID_WIFI` were taken, so the
+survey got an id of its own rather than a ninth version. The first three were unused in KoggerApp when chosen
 (September 2026). 0x57 ("W") sits in the middle of the empty range 0x41–0x63, away from the groups KoggerApp extends
 one by one; 0x58 is its neighbour.
