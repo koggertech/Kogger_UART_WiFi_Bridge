@@ -3,6 +3,30 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.18.0 — 2026‑09‑30
+
+- **Link rate report** (`ID_WIFI_SURVEY` GETTING v1): the PHY rate the other end of the link transmits at - the access
+  point for a station, every joined station for an access point - counted in a short sniffer window (200 ms by
+  default, at most once a second, since ESP-IDF warns that the sniffer cuts the throughput of a working link). Each
+  rate is given with its kind (11b, 11g, 11n, LR), its code, and kbit/s from the 802.11 tables, the rate with the most
+  frames first ([docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4a).
+- **LR is reported, not decoded**: ESP-IDF documents no encoding of LR frames in the received-frame metadata, so an LR
+  link shows its raw rate field and kbit/s 0 until a calibration against frames sent at a set LR rate says what the
+  field means.
+
+- `tools/sbp_update.py --back-wait SECONDS`: how long to wait for the module after each of its reboots (20 s by
+  default). A module behind a Wi-Fi link needs more - its station has to notice the access point restart and join
+  again - and 20 s made a first update over the air fail to see the module come back: use 90.
+- `tools/bench_linkrate.py` checks the report on hardware; `--traffic` sends small requests through the link during the
+  window, so that an access point measured from its station's side has frames to time.
+
+Builds (UART and USB) without warnings; PC tests 108/108 (19 of them the link rate decoding and pages). Verified on
+hardware: a head unit's module updated over its UART (7/7, every setting kept), and the **first update over the air**:
+the access point module behind it updated through the relay (7/7, 7.2 KB/s, every setting kept). The link rate on
+both ends of a b/g/n link: 11n MCS7 with short guard interval, 72.2 Mbit/s, both ways (12/12 and 11/11 checks). On an
+LR link every frame came with rate field 0x1A: reported, not decoded. An update over the air on a busy LR link is not
+workable - 1.0 KB/s, and the module could not be reached after its reboot, so the image rolled back as designed.
+
 ## 0.17.0 — 2026‑09‑29
 
 - **The channel survey reports the module's own network apart** (`ID_WIFI_SURVEY` CONTENT v0 is 16 bytes, was 14):

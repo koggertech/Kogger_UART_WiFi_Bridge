@@ -32,6 +32,7 @@
 #include "relay.h"
 #include "sbp.h"
 #include "sbpdev.h"
+#include "linkrate.h"
 #include "survey.h"
 #include "wifiap.h"
 #include "wifistat.h"
@@ -63,7 +64,7 @@ typedef struct {
 
 typedef enum {
     M_LINE, M_SBP, M_SCAN_DONE, M_DISCONNECTED, M_GOT_IP, M_TIMER, M_REPORT, M_OTA_TICK,
-    M_AP_START, M_AP_STOP, M_AP_CLIENT
+    M_AP_START, M_AP_STOP, M_AP_CLIENT, M_LINKRATE
 } msg_type_t;
 
 enum { CL_LEFT, CL_JOINED, CL_ADDRESS }; /* M_AP_CLIENT arg */
@@ -811,9 +812,11 @@ static void survey_done(bool ok)
 }
 
 /** The sweep the SBP request asked for; the answer is the response code. The radio moves only on OK. */
+static bool linkrate_busy(void);
+
 static uint8_t survey_begin_radio(uint16_t dwell, uint16_t mask)
 {
-    if (SV.on || S.scanning || S.st == ST_CONNECTING)
+    if (SV.on || S.scanning || S.st == ST_CONNECTING || linkrate_busy())
         return SBP_RESP_ERR_RUNTIME;
     dwell = survey_clamp_dwell(dwell);
     mask = survey_clamp_mask(mask);
@@ -1372,10 +1375,147 @@ static void sbp_wifi(const sbp_frame_t *f)
     }
 }
 
+/* ---- link rate (linkrate.h, docs/SBP_WIFI.md 4a) -------------------------------------------- */
+
+static struct {
+    bool        on;
+    bool        promisc;
+    sbp_chan_t  ch;           /* where the pages go */
+    int64_t     last_end;     /* when the last window closed, 0 = none yet */
+} LRW;
+
+static esp_timer_handle_t s_lrw_timer;
+
+/* Promiscuous callback, Wi-Fi task: a data frame received without error, counted when a peer sent it. */
+static void linkrate_rx(void *buf, wifi_promiscuous_pkt_type_t type)
+{
+    const wifi_promiscuous_pkt_t *p = buf;
+    const wifi_pkt_rx_ctrl_t *r = &p->rx_ctrl;
+    if (type != WIFI_PKT_DATA || r->rx_state != 0 || r->sig_len < 16)
+        return;
+    linkrate_frame(p->payload + 10, (int8_t)r->rssi, (uint8_t)r->sig_mode, (uint8_t)r->rate, (uint8_t)r->mcs,
+                   r->cwb, r->sgi);
+}
+
+static void lrw_cb(void *arg)
+{
+    msg_t m = { .type = M_LINKRATE };
+    post(&m);
+}
+
+/* The pages (or {0, 0} when the module has no peer) to whoever asked. */
+static void linkrate_answer(const sbp_chan_t *to)
+{
+    sbp_chan_t cur;
+    sbpdev_channel(&cur);
+    sbpdev_set_channel(to);
+    int n = linkrate_total();
+    if (n == 0) {
+        const uint8_t none[2] = { 0, 0 };
+        sbpdev_send(SBP_T_CONTENT, 1, SBP_ID_WIFI_SURVEY, none, sizeof none);
+    }
+    for (int i = 0; i < n; i++) {
+        uint8_t page[LINKRATE_PAGE_MAX];
+        int len = linkrate_page(i, page);
+        if (len)
+            sbpdev_send(SBP_T_CONTENT, 1, SBP_ID_WIFI_SURVEY, page, (uint8_t)len);
+    }
+    sbpdev_set_channel(&cur);
+}
+
+static void linkrate_end(void)
+{
+    if (!LRW.on)
+        return;
+    if (LRW.promisc) {
+        esp_wifi_set_promiscuous(false);
+        LRW.promisc = false;
+    }
+    LRW.on = false;
+    LRW.last_end = esp_timer_get_time();
+    linkrate_answer(&LRW.ch);
+}
+
+/* Peers: the access point a station is joined to, or the stations joined to an access point. A peer may send LR
+ * frames when a station negotiated LR, or when an access point runs LR and the station can do LR. */
+static uint8_t linkrate_begin_radio(uint16_t window)
+{
+    int64_t now = esp_timer_get_time();
+    if (LRW.on || SV.on || S.scanning || S.st == ST_CONNECTING ||
+        (LRW.last_end && now - LRW.last_end < (int64_t)LINKRATE_GAP_MS * 1000))
+        return SBP_RESP_ERR_RUNTIME;
+    uint8_t peers[LINKRATE_PEERS_MAX][6];
+    bool lr[LINKRATE_PEERS_MAX] = { false };
+    int n = 0;
+    radio_cfg_t rc;
+    radio_now_t rn;
+    radio_get(&rc, &rn);
+    if (s_ap) {
+        wifi_sta_list_t l;
+        if (esp_wifi_ap_get_sta_list(&l) == ESP_OK)
+            for (int i = 0; i < l.num && n < LINKRATE_PEERS_MAX; i++, n++) {
+                memcpy(peers[n], l.sta[i].mac, 6);
+                lr[n] = rc.proto == RADIO_P_LR || ((rc.proto & RADIO_P_LR) && l.sta[i].phy_lr);
+            }
+    } else if (S.st == ST_CONNECTED) {
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+            memcpy(peers[0], ap.bssid, 6);
+            lr[0] = rn.phy == 0; /* WIFI_PHY_MODE_LR */
+            n = 1;
+        }
+    }
+    linkrate_begin((const uint8_t (*)[6])peers, lr, n, window, rn.phy);
+    if (n == 0) {
+        LRW.last_end = now;
+        linkrate_answer(&LRW.ch); /* nobody to listen to: {0, 0} at once */
+        return SBP_RESP_OK;
+    }
+    const wifi_promiscuous_filter_t flt = { .filter_mask = WIFI_PROMIS_FILTER_MASK_DATA };
+    esp_wifi_set_promiscuous_filter(&flt);
+    esp_wifi_set_promiscuous_rx_cb(linkrate_rx);
+    if (esp_wifi_set_promiscuous(true) != ESP_OK)
+        return SBP_RESP_ERR_RUNTIME;
+    LRW.promisc = true;
+    LRW.on = true;
+    esp_timer_start_once(s_lrw_timer, (uint64_t)window * 1000);
+    return SBP_RESP_OK;
+}
+
+/* ID_WIFI_SURVEY GETTING v1 {U2 window ms, optional}: the rates of the peer's frames after the window. A read, so no
+ * key; the gap between windows bounds what the sniffer costs the link. */
+static void sbp_linkrate(const sbp_frame_t *f)
+{
+    if (sbp_type(f->mode) != SBP_T_GETTING) {
+        sbpdev_ack(f, SBP_RESP_ERR_TYPE);
+        return;
+    }
+    uint16_t w = linkrate_clamp_window(f->len >= 2 ? sbp_get_u16(f->payload) : 0);
+    sbp_chan_t here;
+    sbpdev_channel(&here);
+    if (LRW.on) {
+        sbpdev_ack(f, SBP_RESP_ERR_RUNTIME);
+        return;
+    }
+    LRW.ch = here;
+    uint8_t code = linkrate_begin_radio(w);
+    if (code != SBP_RESP_OK)
+        sbpdev_ack(f, code); /* busy (a sweep, a scan, joining) or too soon after the last window */
+}
+
+static bool linkrate_busy(void)
+{
+    return LRW.on;
+}
+
 /* ID_WIFI_SURVEY 0x59: SETTING v0 {KEY, U2 dwell ms, U2 channel mask} starts a sweep, GETTING v0 asks
- * for the last results again (docs/SBP_WIFI.md 4a). */
+ * for the last results again, GETTING v1 measures the link rate (docs/SBP_WIFI.md 4a). */
 static void sbp_survey(const sbp_frame_t *f)
 {
+    if (sbp_ver(f->mode) == 1) {
+        sbp_linkrate(f);
+        return;
+    }
     if (sbp_ver(f->mode) != 0) {
         sbpdev_ack(f, SBP_RESP_ERR_VERSION);
         return;
@@ -1670,6 +1810,7 @@ static void manager_task(void *arg)
             survey_tick();
             supervise();
             break;
+        case M_LINKRATE:     linkrate_end(); break;
         case M_SCAN_DONE:    on_scan_done(m.arg); break;
         case M_DISCONNECTED: on_disconnected(m.arg, m.ssid); break;
         case M_GOT_IP:       on_got_ip(); break;
@@ -1703,6 +1844,8 @@ void manager_init(esp_netif_t *net)
     ESP_ERROR_CHECK(esp_timer_create(&tr, &s_report));
     const esp_timer_create_args_t to = { .callback = otatick_cb, .name = "ota_tick" };
     ESP_ERROR_CHECK(esp_timer_create(&to, &s_otatick));
+    const esp_timer_create_args_t tl = { .callback = lrw_cb, .name = "linkrate" };
+    ESP_ERROR_CHECK(esp_timer_create(&tl, &s_lrw_timer));
     /* Registered before esp_wifi_start(): WIFI_EVENT_AP_START follows it at once. Events wait in the
      * queue until the task runs. */
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_evt, NULL));

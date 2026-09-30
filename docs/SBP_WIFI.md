@@ -1,6 +1,7 @@
 # The module as a Kogger SBP device
 
-Contract version 7 (firmware 0.16.0: `ID_WIFI_SURVEY` 0x59, how busy each channel is; version 6 = 0.15.0:
+Contract version 8 (firmware 0.18.0: `ID_WIFI_SURVEY` v1, the link rate; version 7 = 0.16.0: `ID_WIFI_SURVEY`
+0x59, how busy each channel is; version 6 = 0.15.0:
 every port rate change saved at once; version 5 = 0.14.0: rates up to
 5 000 000 baud since 0.13, `ID_WIFI` v1 of 27 bytes; version 4 = 0.12.0, version 3 = 0.11.0, version 2 = 0.10.0, version 1 = 0.2.0). Changes are summarised at the end of §3 and §4
 and in [CHANGELOG.md](../CHANGELOG.md). Implementation: `firmware/main/sbp.c`, `sbpdev.c`, `manager.c`, `netctl.c`,
@@ -369,6 +370,36 @@ acknowledgements. It is a floor, not the true occupancy, and it is better labell
 
 Checks: the air-time arithmetic and the pages on the PC (`firmware/main/survey.c`, `tests/test_all.py`), the whole
 thing on hardware with `tools/bench_survey.py`.
+
+### Link rate - GETTING v1 (firmware 0.18)
+
+The PHY rate the other end of the link transmits at: for a station its access point, for an access point every
+joined station. For a short window the module sniffs its own channel (no channel change, no scan) and counts the data
+frames that end sent, received without error.
+
+- **GETTING v1** `{U2 window ms}` (the payload may be left out): 50…1000 ms, 0 or no payload = 200. The answer comes
+  after the window. No key: it is a read. ERR_RUNTIME while a window, a channel sweep, a scan or a connection runs,
+  **or sooner than 1 s after the last window ended**: the sniffer has a great impact on the throughput of a working
+  connection (ESP-IDF api-guides/wifi.rst, "Wi-Fi Sniffer Mode"), so the window is short and at most once a second.
+  SETTING v1 is ERR_TYPE.
+- **CONTENT v1**, one frame per other end, 16 + 9·n bytes: `U1 index, U1 total, U1[6] address of the other end,
+  U2 window ms, U2 frames from it, S1 average RSSI of those frames (-128 = none), U1 negotiated PHY mode (as `phy` in
+  `ID_WIFI` v7: 0 LR, 1 11b, 2 11g, 4 HT20, 5 HT40, 0xFF = not known, always for an access point), U1 n (≤ 4), U1 0`,
+  then n entries `{U1 kind, U1 code, U1 flags, U4 kbit/s, U2 frames}`, the rate with the most frames first. With no
+  other end (a station not joined, an access point without clients): one `{0, 0}` frame at once.
+  - Kind: 1 = 11b (code = the rate code 0x00…0x07), 2 = 11g (code 0x08…0x0F), 3 = 11n (code = MCS; flags: bit0 short
+    guard interval, bit1 40 MHz), 4 = **LR**, 0 = other.
+  - kbit/s comes from the 802.11 tables: 11b/11g by the code, 11n by MCS, width and guard interval (MCS7, 20 MHz,
+    short GI = 72 200).
+  - **LR is not decoded: kbit/s = 0, and the code is the raw 5-bit rate field of the received frame.** ESP-IDF does not
+    document how LR frames are marked in the received-frame metadata (`wifi_pkt_rx_ctrl_t`): on the transmit side the
+    250 and 500 kbit/s rates are 0x29 and 0x2A, which the 5-bit field cannot hold. What the code means takes a
+    calibration against frames sent at a set LR rate; it must not be guessed before that. A frame counts as LR when the
+    station negotiated LR, or the access point runs LR (with mixed BGNLR: when the station can do LR).
+- Management and broadcast frames are not counted: only data from the other end.
+
+Checks: the decoding and the pages on the PC (`firmware/main/linkrate.c`, `tests/test_all.py`), on hardware with
+`tools/bench_linkrate.py` (a module behind a bridge too: `--route 88`).
 
 ## 5. X1: SBP and the IP bridge
 

@@ -104,6 +104,9 @@ python tools/bench_sbp.py --port COM3 --write-test             # + a saved chang
   after a role change with reboot), then at its bridging address (88 after the switch to the access point) and finally at 0, 87
   and 88.
 - `bench_sbp.py` scans and briefly changes settings, so do not run it on a module that carries live traffic.
+- `tools/bench_linkrate.py --port COM3` checks the link rate report of 0.18 on hardware: the pages after the window,
+  the peer (the access point's BSSID for a station), every rate outside LR decoded, the 1 s gap between windows and
+  the refusals; `--route 88` measures a module behind a bridge, over the air. No setting is changed.
 - `tools/bench_survey.py --port COM3` checks the channel survey of 0.16 on hardware: a sweep and its pages, the
   dwell and the flags, the same results from GETTING, and the refusals (no key, a short payload, a second sweep while
   one runs). It takes the radio away for about two seconds, and changes no setting.

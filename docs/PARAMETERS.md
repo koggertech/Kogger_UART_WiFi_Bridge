@@ -1,6 +1,6 @@
 # Parameters
 
-Every setting of firmware 0.17.0 with its default and range, the build options, the timing constants and the buffers.
+Every setting of firmware 0.18.0 with its default and range, the build options, the timing constants and the buffers.
 The values are taken from the source (`firmware/main/*.c`, `Kconfig.projbuild`, `sdkconfig.defaults`,
 `partitions.csv`); the file is named where it helps.
 
@@ -168,6 +168,7 @@ releases to this layout.
 | Packet size / packet pool | 512 B / 24 packets (12 KiB) | `kpack.h` `KP_MAX_PACKET`, `relay.c` `POOL_N` |
 | Network receive buffer | 1500 B | `relay.c` `RXBUF` |
 | Rescan budget | 8 bytes per input byte, saved up to 32 × 4096 | `kframe.h` `KF_BUDGET_RATIO`, `KF_BUDGET_SAVE` |
+| Link rate: sniffer window / least gap between windows / rates listed per peer | 200 ms (50 … 1000) / 1 s / 4 of up to 8 | `linkrate.h`, `ID_WIFI_SURVEY` v1 |
 | Channel survey: dwell per channel / channels swept / transmitters remembered | 120 ms (50 … 1000) / 1–11 / 24 per channel | `survey.h`, `ID_WIFI_SURVEY` |
 | Manager queue / slots kept for Wi‑Fi events / a request's wait for room | 64 / 8 / 20 ms (0.14; 24 / 8 / none before) | `manager.c` `QUEUE_LEN`, `EVENT_RESERVE`, `REQ_WAIT_TICKS` |
 | Scan results kept | 32 networks | `manager.c` `MAX_SCAN` |

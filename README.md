@@ -36,7 +36,7 @@ UDP. On the same port the module answers its own SBP address 87 and sends its Wi
 In the access‑point role the same board can be the boat‑side end: it bridges a sonar or autopilot
 UART to phones and laptops on its own network.
 
-## Key figures (firmware 0.17.0)
+## Key figures (firmware 0.18.0)
 
 | | |
 |---|---|
@@ -98,7 +98,7 @@ Flashing, the native‑USB variant and the bench checks are described in
 
 ## Status
 
-- **Verified on hardware (0.1–0.16):**
+- **Verified on hardware (0.1–0.18):**
   - SBP device checks;
   - baud rates 9600 to 2 Mbaud on a bench adapter, 2/3/4 Mbaud on a head unit's UART;
   - IP bridge through NAT;
@@ -118,9 +118,14 @@ Flashing, the native‑USB variant and the bench checks are described in
   - 0.15.0: a port rate set through that very port saved at once and kept across a reboot; the BOOT 5 s press
     restoring 921600 on both ports with every other setting kept;
   - 0.16.0: a channel survey in the station role - 11 channels swept, the pages, the flags and the refusals
-    (`tools/bench_survey.py`), with the Wi-Fi link back afterwards.
-- **Not yet verified on hardware:** the channel survey in the access-point role; data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
-  module updated from 0.12; two factory modules relaying to each other; the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
+    (`tools/bench_survey.py`), with the Wi-Fi link back afterwards;
+  - 0.18.0: the first firmware update over the air - an access-point module updated through a head unit's relay
+    (7/7, every setting kept); the link rate on both ends of a b/g/n link, 11n MCS7 with short guard interval both
+    ways (`tools/bench_linkrate.py`); an image that could not be confirmed over a busy LR link rolled back to the
+    previous one at the next power-on.
+- **Not yet verified on hardware:** the channel survey in the access-point role; what the LR rate field of a
+  received frame means (0x1A seen on every frame of an LR link); data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
+  module updated from 0.12; two factory modules relaying to each other; the 0.11 transmit fix under a saturated 921600 port; an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
 
 The status of each release is in [CHANGELOG.md](CHANGELOG.md).
 

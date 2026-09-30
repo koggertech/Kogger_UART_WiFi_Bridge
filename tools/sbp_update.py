@@ -7,6 +7,7 @@
   python tools/sbp_update.py --port COM3 FILE --stop 50         # transfer abandoned: old image keeps running
   python tools/sbp_update.py --port COM3 FILE --expect-rollback # image that never confirms: must roll back
   python tools/sbp_update.py --port /dev/ttyUSB0 --route 87 --sbp-only FILE   # a line bridges: SBP-only port
+  python tools/sbp_update.py --port /dev/ttyUSB0 --route 88 --sbp-only --back-wait 90 FILE  # over the air (0.17+)
 
 --sbp-only is for a module whose port carries only SBP (a UART line bridges to the network, 0.7+): the
 SLIP questions of fwinfo.py cannot reach it there. Versions are then read with ID_VERSION (major.minor only,
@@ -250,6 +251,9 @@ def main():
     ap.add_argument('--corrupt', type=int, default=0, help='flip one byte in chunk N (image must be refused)')
     ap.add_argument('--stop', type=int, default=0, help='abandon the transfer after chunk N')
     ap.add_argument('--expect-rollback', action='store_true', help='image never confirms: expect the old version back')
+    ap.add_argument('--back-wait', type=float, default=20.0,
+                    help='seconds to wait for the module after each of its reboots; a module behind a Wi-Fi link needs '
+                         'more (its station must notice the access point restart and join again): use 90')
     ap.add_argument('--sbp-only', action='store_true',
                     help='the port carries only SBP (a line bridges): no SLIP questions, confirmation proven by a reboot')
     ap.add_argument('file')
@@ -307,7 +311,7 @@ def main():
         check('module keeps running %s, bootMode 0' % old_mm, v is not None and v[1] == old_mm and v[0] == 0, v)
     else:
         check('image accepted (ID_BOOT v1 -> OK)', ok and code == 1, code)
-        v = poll_version(d, new_mm, 20.0)
+        v = poll_version(d, new_mm, a.back_wait)
         check('module comes back reporting %s' % new_mm, v is not None and v[1] == new_mm, v)
         if a.expect_rollback:
             print('image must not confirm; waiting for the rollback (up to %d s) ...' % ROLLBACK_WAIT_S)
@@ -327,7 +331,7 @@ def main():
         check('proving reboot requested (ID_BOOT v0 -> OK)', code == 1, code)
         t0 = time.monotonic()
         time.sleep(7.0)
-        v = poll_version(d, want, 20.0)
+        v = poll_version(d, want, a.back_wait)
         up = uptime(d)
         rebooted = up is not None and up <= time.monotonic() - t0 + 2
         check('after the reboot (uptime %s s) the module reports %s: %s' % (

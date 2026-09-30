@@ -26,6 +26,7 @@
 #include "portinfo.h"
 #include "proto.h"
 #include "sbp.h"
+#include "linkrate.h"
 #include "survey.h"
 
 static uint32_t lcg = 12345;
@@ -154,6 +155,53 @@ int main(int argc, char **argv)
                 for (int i = 0; survey_page(i, page); i++) {
                     printf("P ");
                     hex(page, sizeof page);
+                    printf("\n");
+                }
+            }
+        }
+        return 0;
+    }
+    if (argc >= 2 && !strcmp(argv[1], "linkrate")) {
+        static char line[512], hx[64];
+        static uint8_t page[LINKRATE_PAGE_MAX], peers[LINKRATE_PEERS_MAX][6], mac[6];
+        static bool lr[LINKRATE_PEERS_MAX];
+        int np = 0;
+        while (fgets(line, sizeof line, stdin)) {
+            char cmd[16];
+            unsigned a = 0, b = 0, c = 0, d = 0, e = 0, g = 0;
+            int r = 0;
+            if (sscanf(line, "%15s", cmd) != 1)
+                continue;
+            if (!strcmp(cmd, "kbps")) { /* kind code flags */
+                sscanf(line, "%*s %u %u %u", &a, &b, &c);
+                printf("K %lu\n", (unsigned long)linkrate_kbps((uint8_t)a, (uint8_t)b, (uint8_t)c));
+            } else if (!strcmp(cmd, "class")) { /* sig_mode rate mcs cwb sgi lr */
+                sscanf(line, "%*s %u %u %u %u %u %u", &a, &b, &c, &d, &e, &g);
+                uint8_t k, co, fl;
+                linkrate_classify((uint8_t)a, (uint8_t)b, (uint8_t)c, d != 0, e != 0, g != 0, &k, &co, &fl);
+                printf("T %u %u %u\n", k, co, fl);
+            } else if (!strcmp(cmd, "clamp")) {
+                sscanf(line, "%*s %u", &a);
+                printf("W %u\n", linkrate_clamp_window((uint16_t)a));
+            } else if (!strcmp(cmd, "peer")) { /* mac lr */
+                sscanf(line, "%*s %63s %u", hx, &a);
+                if (np < LINKRATE_PEERS_MAX && unhex(hx, peers[np], 6) == 6)
+                    lr[np++] = a != 0;
+            } else if (!strcmp(cmd, "begin")) { /* window phy */
+                sscanf(line, "%*s %u %u", &a, &b);
+                linkrate_begin((const uint8_t (*)[6])peers, lr, np, (uint16_t)a, (uint8_t)b);
+            } else if (!strcmp(cmd, "frame")) { /* mac rssi sig_mode rate mcs cwb sgi */
+                sscanf(line, "%*s %63s %d %u %u %u %u %u", hx, &r, &a, &b, &c, &d, &e);
+                if (unhex(hx, mac, 6) == 6)
+                    linkrate_frame(mac, (int8_t)r, (uint8_t)a, (uint8_t)b, (uint8_t)c, d != 0, e != 0);
+            } else if (!strcmp(cmd, "pages")) {
+                printf("N %d\n", linkrate_total());
+                for (int i = 0;; i++) {
+                    int len = linkrate_page(i, page);
+                    if (!len)
+                        break;
+                    printf("P ");
+                    hex(page, (size_t)len);
                     printf("\n");
                 }
             }

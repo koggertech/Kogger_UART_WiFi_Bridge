@@ -339,6 +339,35 @@ def survey_payload(dwell_ms=0, channels=0):
 SURVEY_FLAGS = ['home', 'ap_ok', 'noise_bad']
 
 
+LINKRATE_WINDOW_DEF = 200
+LINKRATE_KINDS = {0: 'other', 1: '11b', 2: '11g', 3: 'ht', 4: 'lr'}
+
+
+def linkrate_payload(window_ms=0):
+    """GETTING v1 of ID_WIFI_SURVEY: the rates of the peer's frames over a sniffer window (0 = 200 ms)."""
+    return struct.pack('<H', window_ms)
+
+
+def parse_linkrate(p):
+    """ID_WIFI_SURVEY CONTENT v1 (0.18): the PHY rates of one peer's frames in the last window (or {0, 0} = no peer).
+
+    kbps 0 = not known: an LR link (ESP-IDF documents no LR encoding in the received-frame fields) or a code the
+    802.11 tables do not hold; the raw kind and code are still given."""
+    if len(p) == 2:
+        return dict(index=p[0], total=p[1])
+    if len(p) < 16 or len(p) < 16 + 9 * p[14]:
+        raise ValueError('bad v1 length %d' % len(p))
+    window, frames = struct.unpack('<HH', p[8:12])
+    rates = []
+    for i in range(p[14]):
+        e = p[16 + 9 * i:25 + 9 * i]
+        kbps, n = struct.unpack('<IH', e[3:9])
+        rates.append(dict(kind=LINKRATE_KINDS.get(e[0], e[0]), code=e[1], sgi=bool(e[2] & 1), mhz=40 if e[2] & 2 else 20,
+                          kbps=kbps, frames=n))
+    return dict(index=p[0], total=p[1], peer=':'.join('%02x' % x for x in p[2:8]), window_ms=window, frames=frames,
+                rssi=struct.unpack('b', p[12:13])[0], phy=PHY_MODES.get(p[13], p[13]), rates=rates)
+
+
 def parse_survey(p):
     """ID_WIFI_SURVEY CONTENT v0: one channel of the last sweep (or {0, 0} = no sweep yet).
 

@@ -124,7 +124,7 @@ def build(tmp):
     kind, tool = find_compiler()
     srcs = [os.path.join(ROOT, 'tests', 'c_harness.c')] + [os.path.join(FW, f) for f in
                                                           ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c', 'portinfo.c',
-                                                           'bootkey.c', 'survey.c')]
+                                                           'bootkey.c', 'survey.c', 'linkrate.c')]
     exe = os.path.join(tmp, 'c_harness.exe' if os.name == 'nt' else 'c_harness')
     if kind == 'gcc':
         cmd = [tool, '-std=c99', '-O2', '-Wall', '-Wextra', '-Werror', '-I', FW, '-o', exe] + srcs
@@ -488,6 +488,66 @@ def bootkey_tests(exe):
     check('bootkey: after that a real press works', out.endswith('**R'), out[-5:])
 
 
+def linkrate_tests(exe):
+    """Link rate decoding, counting and pages (firmware/main/linkrate.c), read with host/sbpframe.parse_linkrate."""
+    def run(script):
+        return subprocess.run([exe, 'linkrate'], input=NL.join(script) + NL, stdout=subprocess.PIPE,
+                              text=True).stdout.split(NL)
+
+    def kbps(kind, code, flags=0):
+        return int(run(['kbps %d %d %d' % (kind, code, flags)])[0].split()[1])
+
+    check('linkrate: 11b 1 Mbit/s long preamble', kbps(1, 0x00) == 1000, str(kbps(1, 0x00)))
+    check('linkrate: 11b 11 Mbit/s short preamble', kbps(1, 0x07) == 11000, str(kbps(1, 0x07)))
+    check('linkrate: code 0x04 is no 11b rate', kbps(1, 0x04) == 0, str(kbps(1, 0x04)))
+    check('linkrate: 11g 6 and 54 Mbit/s', (kbps(2, 0x0B), kbps(2, 0x0C)) == (6000, 54000),
+          str((kbps(2, 0x0B), kbps(2, 0x0C))))
+    check('linkrate: 11n MCS7 20 MHz 65.0 / short GI 72.2 Mbit/s', (kbps(3, 7), kbps(3, 7, 1)) == (65000, 72200),
+          str((kbps(3, 7), kbps(3, 7, 1))))
+    check('linkrate: 11n MCS0 40 MHz short GI 15 Mbit/s, MCS7 150 Mbit/s', (kbps(3, 0, 3), kbps(3, 7, 3)) ==
+          (15000, 150000), str((kbps(3, 0, 3), kbps(3, 7, 3))))
+    check('linkrate: a second spatial stream (MCS8) is not in the one-stream table', kbps(3, 8) == 0)
+    check('linkrate: an LR rate is not known (no documented encoding)', kbps(4, 0x0A) == 0)
+
+    def cls(*a):
+        return tuple(int(x) for x in run(['class %d %d %d %d %d %d' % a])[0].split()[1:])
+
+    check('linkrate: an HT frame is kind ht, code = MCS, flags = short GI + 40 MHz', cls(1, 0, 5, 1, 1, 0) == (3, 5, 3),
+          str(cls(1, 0, 5, 1, 1, 0)))
+    check('linkrate: a non-HT frame of an LR link is kind lr with its raw rate field', cls(0, 0x0A, 0, 0, 0, 1) ==
+          (4, 0x0A, 0), str(cls(0, 0x0A, 0, 0, 0, 1)))
+    check('linkrate: non-HT codes up to 0x07 are 11b, above are 11g', (cls(0, 3, 0, 0, 0, 0)[0],
+          cls(0, 0x0C, 0, 0, 0, 0)[0]) == (1, 2))
+    check('linkrate: the window 0 -> 200, 10 -> 50, 5000 -> 1000 ms', [int(run(['clamp %d' % w])[0].split()[1])
+          for w in (0, 10, 5000)] == [200, 50, 1000])
+
+    a, b, x = 'aabbccddeeff', '112233445566', '999999999999'
+    script = ['peer %s 0' % a, 'peer %s 1' % b, 'begin 200 4',
+              'frame %s -40 1 0 7 0 1' % a, 'frame %s -44 1 0 7 0 1' % a, 'frame %s -42 1 0 5 0 0' % a,
+              'frame %s -60 0 10 0 0 0' % b, 'frame %s -30 1 0 7 0 1' % x, 'pages']
+    out = run(script)
+    pages = [SB.parse_linkrate(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')]
+    check('linkrate: one page per peer, a stranger ignored', len(pages) == 2 and pages[0]['total'] == 2, str(out))
+    p = pages[0]
+    check('linkrate: the peer, the window, the frames and the average RSSI', (p['peer'], p['window_ms'], p['frames'],
+          p['rssi'], p['phy']) == ('aa:bb:cc:dd:ee:ff', 200, 3, -42, 'HT20'), str(p))
+    check('linkrate: the rate with the most frames first (MCS7 short GI: 2, then MCS5: 1)',
+          [(r['kind'], r['code'], r['sgi'], r['kbps'], r['frames']) for r in p['rates']] ==
+          [('ht', 7, True, 72200, 2), ('ht', 5, False, 52000, 1)], str(p['rates']))
+    q = pages[1]
+    check('linkrate: a peer whose link may run LR: raw code, rate 0 = not known',
+          [(r['kind'], r['code'], r['kbps']) for r in q['rates']] == [('lr', 10, 0)] and q['rssi'] == -60, str(q))
+
+    many = ['peer %s 0' % a, 'begin 100 255'] + ['frame %s -50 1 0 %d 0 0' % (a, m % 8) for m in range(9)] + \
+           ['frame %s -50 0 %d 0 0 0' % (a, 0x0B), 'pages']
+    p = [SB.parse_linkrate(bytes.fromhex(l.split()[1])) for l in run(many) if l.startswith('P ')][0]
+    check('linkrate: at most 4 rates reported, every frame counted', len(p['rates']) == 4 and p['frames'] == 10
+          and p['phy'] == 'none', str(p))
+    out = run(['begin 200 4', 'pages'])
+    check('linkrate: no peer, no page', out[0] == 'N 0' and not [l for l in out if l.startswith('P ')], str(out))
+    check('linkrate: the {0, 0} answer parses as no peer', SB.parse_linkrate(bytes([0, 0])) == dict(index=0, total=0))
+
+
 def survey_tests(exe):
     """Channel survey arithmetic and pages (firmware/main/survey.c), read with host/sbpframe.parse_survey."""
     def run(script):
@@ -634,6 +694,7 @@ def main():
             c_tests(exe, tmp)
             portinfo_tests(exe)
             survey_tests(exe)
+            linkrate_tests(exe)
             bootkey_tests(exe)
     failed = [n for n, ok in results if not ok]
     print(NL + '%d checks, %d failed' % (len(results), len(failed)))
