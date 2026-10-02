@@ -1,6 +1,7 @@
 # The module as a Kogger SBP device
 
-Contract version 8 (firmware 0.18.0: `ID_WIFI_SURVEY` v1, the link rate; version 7 = 0.16.0: `ID_WIFI_SURVEY`
+Contract version 9 (firmware 0.19.0: a timing bound on the rates of `ID_WIFI_SURVEY` v1, which proves LR
+500 kbit/s; version 8 = 0.18.0: `ID_WIFI_SURVEY` v1, the link rate; version 7 = 0.16.0: `ID_WIFI_SURVEY`
 0x59, how busy each channel is; version 6 = 0.15.0:
 every port rate change saved at once; version 5 = 0.14.0: rates up to
 5 000 000 baud since 0.13, `ID_WIFI` v1 of 27 bytes; version 4 = 0.12.0, version 3 = 0.11.0, version 2 = 0.10.0, version 1 = 0.2.0). Changes are summarised at the end of §3 and §4
@@ -397,9 +398,22 @@ frames that end sent, received without error.
     calibration against frames sent at a set LR rate; it must not be guessed before that. A frame counts as LR when the
     station negotiated LR, or the access point runs LR (with mixed BGNLR: when the station can do LR).
 - Management and broadcast frames are not counted: only data from the other end.
+- **Timing bound (0.19).** Two frames of one transmitter cannot overlap in the air, so for two consecutive frames at
+  one rate `rate >= min(length 1, length 2) x 8 / time between their receive timestamps` - whether the radio stamps a
+  frame at its start or at its end. The largest bound of the window is given for every rate: after the n entries come
+  **n x U4 bound, kbit/s** (0 = no pair timed), in the same order; a page is 16 + 13·n bytes, of which the first
+  16 + 9·n are as in 0.18. Pairs closer than 20 µs or farther than 100 ms are not timed, nor are the parts of an
+  802.11n aggregate (they share a timestamp).
+  - **LR:** LR has only two rates, 250 and 500 kbit/s, and a 250 kbit/s frame can never give a bound above 250. An LR
+    rate whose bound is **300 to 550 kbit/s is therefore reported as 500**, with flag bit2 "proven by frame timing".
+    Below 300 it stays 0 = not known (the timing cannot prove 250); above 550 too: no LR frame is faster than
+    500 kbit/s, so such a bound means timestamps that cannot be trusted.
+  - The method itself is checked: a bound must never exceed an 802.11n rate from the tables, which
+    `tools/bench_linkrate.py` checks on every run. The bound needs frames back to back: `--burst N` pushes N large
+    frames through the link, to address 200, which nobody listens to.
 
-Checks: the decoding and the pages on the PC (`firmware/main/linkrate.c`, `tests/test_all.py`), on hardware with
-`tools/bench_linkrate.py` (a module behind a bridge too: `--route 88`).
+Checks: the decoding, the bound and the pages on the PC (`firmware/main/linkrate.c`, `tests/test_all.py`), on
+hardware with `tools/bench_linkrate.py` (a module behind a bridge too: `--route 88`).
 
 ## 5. X1: SBP and the IP bridge
 

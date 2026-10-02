@@ -19,6 +19,7 @@ static const uint32_t HT_KBPS[2][2][8] = {
 typedef struct {
     uint8_t  kind, code, flags;
     uint16_t frames;
+    uint32_t bound; /* kbit/s, the largest timing bound of this rate in the window */
 } rate_t;
 
 typedef struct {
@@ -28,6 +29,9 @@ typedef struct {
     int32_t  rssi_sum;
     uint8_t  nrates;
     rate_t   rates[LINKRATE_RATES_MAX];
+    int      last;     /* rate index of the last timed frame, -1 = none */
+    uint32_t last_ts;
+    uint16_t last_len;
 } peer_t;
 
 static peer_t   s_peer[LINKRATE_PEERS_MAX];
@@ -82,13 +86,31 @@ void linkrate_begin(const uint8_t peers[][6], const bool *lr, int n, uint16_t wi
     for (int i = 0; i < s_n; i++) {
         memcpy(s_peer[i].mac, peers[i], 6);
         s_peer[i].lr = lr && lr[i];
+        s_peer[i].last = -1;
     }
     s_window = window_ms;
     s_phy = phy_mode;
 }
 
+/* Two consecutive frames of one transmitter at one rate: the air time of one of them lies between the timestamps. */
+static void timed(peer_t *p, int idx, uint32_t ts, uint16_t len)
+{
+    if (p->last == idx) {
+        uint32_t dt = ts - p->last_ts; /* wraps right */
+        if (dt >= LINKRATE_DT_MIN_US && dt <= LINKRATE_DT_MAX_US) {
+            uint32_t bits = (uint32_t)(len < p->last_len ? len : p->last_len) * 8u;
+            uint32_t kbps = (uint32_t)((uint64_t)bits * 1000u / dt);
+            if (kbps > p->rates[idx].bound)
+                p->rates[idx].bound = kbps;
+        }
+    }
+    p->last = idx;
+    p->last_ts = ts;
+    p->last_len = len;
+}
+
 void linkrate_frame(const uint8_t *addr2, int8_t rssi, uint8_t sig_mode, uint8_t rate, uint8_t mcs, bool cwb,
-                    bool sgi)
+                    bool sgi, uint32_t ts_us, uint16_t len, bool aggregated)
 {
     peer_t *p = NULL;
     for (int i = 0; i < s_n && !p; i++)
@@ -100,16 +122,25 @@ void linkrate_frame(const uint8_t *addr2, int8_t rssi, uint8_t sig_mode, uint8_t
     linkrate_classify(sig_mode, rate, mcs, cwb, sgi, p->lr, &kind, &code, &flags);
     p->frames++;
     p->rssi_sum += rssi;
-    for (int i = 0; i < p->nrates; i++) {
+    int idx = -1;
+    for (int i = 0; i < p->nrates && idx < 0; i++) {
         rate_t *r = &p->rates[i];
         if (r->kind == kind && r->code == code && r->flags == flags) {
             if (r->frames < 0xFFFF)
                 r->frames++;
-            return;
+            idx = i;
         }
     }
-    if (p->nrates < LINKRATE_RATES_MAX)
-        p->rates[p->nrates++] = (rate_t){ kind, code, flags, 1 };
+    if (idx < 0 && p->nrates < LINKRATE_RATES_MAX) {
+        p->rates[p->nrates] = (rate_t){ kind, code, flags, 1, 0 };
+        idx = p->nrates++;
+    }
+    if (aggregated)
+        return; /* the parts of an aggregate share a timestamp: no pair can be timed with them */
+    if (idx < 0)
+        p->last = -1; /* a rate not listed breaks the chain */
+    else
+        timed(p, idx, ts_us, len);
 }
 
 int linkrate_total(void)
@@ -156,11 +187,18 @@ int linkrate_page(int index, uint8_t *out)
     for (int i = 0; i < top; i++) {
         const rate_t *r = &p->rates[order[i]];
         uint8_t *e = out + LINKRATE_PAGE_HEAD + i * LINKRATE_ENTRY;
+        uint8_t flags = r->flags;
+        uint32_t kbps = linkrate_kbps(r->kind, r->code, r->flags);
+        if (r->kind == LINKRATE_K_LR && r->bound >= LINKRATE_LR_PROOF_KBPS && r->bound <= LINKRATE_LR_CAP_KBPS) {
+            kbps = LINKRATE_LR_FAST_KBPS; /* only 250 and 500 exist, and 250 cannot be timed above 250 */
+            flags |= LINKRATE_F_TIMED;
+        }
         e[0] = r->kind;
         e[1] = r->code;
-        e[2] = r->flags;
-        put32(e + 3, linkrate_kbps(r->kind, r->code, r->flags));
+        e[2] = flags;
+        put32(e + 3, kbps);
         put16(e + 7, r->frames);
+        put32(out + LINKRATE_PAGE_HEAD + top * LINKRATE_ENTRY + i * LINKRATE_BOUND, r->bound);
     }
-    return LINKRATE_PAGE_HEAD + top * LINKRATE_ENTRY;
+    return LINKRATE_PAGE_HEAD + top * (LINKRATE_ENTRY + LINKRATE_BOUND);
 }

@@ -547,6 +547,48 @@ def linkrate_tests(exe):
     check('linkrate: no peer, no page', out[0] == 'N 0' and not [l for l in out if l.startswith('P ')], str(out))
     check('linkrate: the {0, 0} answer parses as no peer', SB.parse_linkrate(bytes([0, 0])) == dict(index=0, total=0))
 
+    # 0.19 timing bound: rate >= min(len1, len2) * 8 / dt for consecutive frames of one rate
+    def page_of(lines):
+        out = run(['peer %s 1' % a, 'begin 200 0'] + lines + ['pages'])
+        return [SB.parse_linkrate(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')][0]
+
+    lr = lambda ts, ln, ag=0: 'frame %s -45 0 26 0 0 0 %d %d %d' % (a, ts, ln, ag)  # noqa: E731
+    p = page_of([lr(1000, 500), lr(11000, 600)])
+    r = p['rates'][0]
+    check('linkrate: two LR frames 500/600 B 10 ms apart bound the rate at 400 kbit/s', r['bound_kbps'] == 400, str(r))
+    check('linkrate: an LR rate bounded above 300 kbit/s is the 500 kbit/s one, marked as timed',
+          (r['kbps'], r['by_timing']) == (500, True), str(r))
+    p = page_of([lr(1000, 300), lr(11000, 300)])
+    r = p['rates'][0]
+    check('linkrate: a bound of 240 kbit/s proves nothing: the LR rate stays not known',
+          (r['bound_kbps'], r['kbps'], r['by_timing']) == (240, 0, False), str(r))
+    p = page_of([lr(1000, 500), lr(5000, 500)])
+    r = p['rates'][0]
+    check('linkrate: an LR bound of 1000 kbit/s is impossible for LR: no proof (timestamps not trusted)',
+          (r['bound_kbps'], r['kbps'], r['by_timing']) == (1000, 0, False), str(r))
+    p = page_of([lr(1000, 500), lr(1010, 500)])
+    check('linkrate: frames 10 us apart are not timed (broken or equal timestamps)', p['rates'][0]['bound_kbps'] == 0,
+          str(p['rates']))
+    p = page_of([lr(1000, 500), lr(5000, 500, 1), lr(9000, 500, 1)])
+    check('linkrate: aggregated frames are counted but never timed', p['rates'][0]['bound_kbps'] == 0
+          and p['rates'][0]['frames'] == 3, str(p['rates']))
+    ht = lambda ts, ln, m=7: 'frame %s -45 1 0 %d 0 1 %d %d 0' % (a, m, ts, ln)  # noqa: E731
+    p = page_of([ht(1000, 1500), lr(2000, 800), ht(2200, 1500)])
+    check('linkrate: a frame of another rate between two breaks the pair', all(x['bound_kbps'] == 0
+          for x in p['rates']), str(p['rates']))
+    p = page_of([ht(1000, 1500), ht(1300, 1500)])
+    r = p['rates'][0]
+    check('linkrate: an 11n rate keeps its table value; its bound (40 Mbit/s) is reported apart',
+          (r['kbps'], r['bound_kbps'], r['by_timing']) == (72200, 40000, False), str(r))
+    p = page_of([lr(4294967000, 500), lr(9704, 500)])
+    check('linkrate: the timestamp wrapping round is timed right (10 ms, 400 kbit/s)',
+          p['rates'][0]['bound_kbps'] == 400, str(p['rates']))
+    out = run(['peer %s 1' % a, 'begin 200 0', lr(1000, 500), lr(11000, 600), 'pages'])
+    raw = bytes.fromhex([l for l in out if l.startswith('P ')][0].split()[1])
+    old = SB.parse_linkrate(raw[:16 + 9 * raw[14]])
+    check('linkrate: a reader of the 0.18 layout reads the same first 16 + 9n bytes', len(raw) == 16 + 13 * raw[14]
+          and old['rates'][0]['kbps'] == 500 and 'bound_kbps' not in old['rates'][0], str(old))
+
 
 def survey_tests(exe):
     """Channel survey arithmetic and pages (firmware/main/survey.c), read with host/sbpframe.parse_survey."""

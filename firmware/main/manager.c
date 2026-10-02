@@ -1394,7 +1394,7 @@ static void linkrate_rx(void *buf, wifi_promiscuous_pkt_type_t type)
     if (type != WIFI_PKT_DATA || r->rx_state != 0 || r->sig_len < 16)
         return;
     linkrate_frame(p->payload + 10, (int8_t)r->rssi, (uint8_t)r->sig_mode, (uint8_t)r->rate, (uint8_t)r->mcs,
-                   r->cwb, r->sgi);
+                   r->cwb, r->sgi, (uint32_t)r->timestamp, (uint16_t)r->sig_len, r->aggregation);
 }
 
 static void lrw_cb(void *arg)

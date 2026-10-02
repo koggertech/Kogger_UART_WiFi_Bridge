@@ -352,18 +352,25 @@ def parse_linkrate(p):
     """ID_WIFI_SURVEY CONTENT v1 (0.18): the PHY rates of one peer's frames in the last window (or {0, 0} = no peer).
 
     kbps 0 = not known: an LR link (ESP-IDF documents no LR encoding in the received-frame fields) or a code the
-    802.11 tables do not hold; the raw kind and code are still given."""
+    802.11 tables do not hold; the raw kind and code are still given.
+    0.19: bound_kbps per rate = the largest timing bound of the window (consecutive frames of that rate, length x 8 /
+    time between them; 0 = no pair timed); an LR rate bounded at 300 or more is reported as 500 with by_timing."""
     if len(p) == 2:
         return dict(index=p[0], total=p[1])
     if len(p) < 16 or len(p) < 16 + 9 * p[14]:
         raise ValueError('bad v1 length %d' % len(p))
     window, frames = struct.unpack('<HH', p[8:12])
+    n_rates = p[14]
+    bounds = len(p) >= 16 + 13 * n_rates
     rates = []
-    for i in range(p[14]):
+    for i in range(n_rates):
         e = p[16 + 9 * i:25 + 9 * i]
         kbps, n = struct.unpack('<IH', e[3:9])
-        rates.append(dict(kind=LINKRATE_KINDS.get(e[0], e[0]), code=e[1], sgi=bool(e[2] & 1), mhz=40 if e[2] & 2 else 20,
-                          kbps=kbps, frames=n))
+        r = dict(kind=LINKRATE_KINDS.get(e[0], e[0]), code=e[1], sgi=bool(e[2] & 1), mhz=40 if e[2] & 2 else 20,
+                 by_timing=bool(e[2] & 4), kbps=kbps, frames=n)
+        if bounds:
+            r['bound_kbps'] = struct.unpack('<I', p[16 + 9 * n_rates + 4 * i:20 + 9 * n_rates + 4 * i])[0]
+        rates.append(r)
     return dict(index=p[0], total=p[1], peer=':'.join('%02x' % x for x in p[2:8]), window_ms=window, frames=frames,
                 rssi=struct.unpack('b', p[12:13])[0], phy=PHY_MODES.get(p[13], p[13]), rates=rates)
 

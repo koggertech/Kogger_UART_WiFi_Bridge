@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.18.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.19.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.18.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.19.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,7 +62,7 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.18.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.19.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
@@ -311,7 +311,8 @@ channel, dwell, <b>busy per mille</b> (air time of the Wi-Fi frames heard, witho
 frames, transmitters, strongest RSSI, noise floor, flags (own channel, usable by an access point, noise not to be
 trusted) and how much of the busy figure is the module's own network. <code>GETTING v1 {U2 window ms}</code> (0.18)
 reports the <b>link rate</b>: the PHY rates the other end of the link transmits at, counted over a 200 ms sniffer
-window, at most once a second (11b, 11g and 11n decoded to kbit/s; LR reported with its raw code).</p>
+window, at most once a second (11b, 11g and 11n decoded to kbit/s). Since 0.19 every rate carries a timing bound
+from consecutive frames, which proves an LR rate of 500 kbit/s when it reaches 300 kbit/s (LR has only 250 and 500).</p>
 
 <h3><code>ID_WIFI_NET</code> = 0x58 (every SETTING starts with the key)</h3>
 <table>

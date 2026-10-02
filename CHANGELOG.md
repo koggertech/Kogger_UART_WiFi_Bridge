@@ -3,7 +3,23 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
-## 0.18.0 — 2026‑09‑30
+## 0.19.0 — 2026‑10‑02
+
+- **A timing bound on the link rates** (`ID_WIFI_SURVEY` v1): two frames of one transmitter cannot overlap in the
+  air, so two consecutive frames of a rate bound it at `min(length) x 8 / time between their receive timestamps`. Each
+  rate now carries that bound; the page grows from 16 + 9·n to 16 + 13·n bytes, of which the first 16 + 9·n are the
+  0.18 layout ([docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4a).
+- **This decodes LR**: LR has only 250 and 500 kbit/s, and a 250 kbit/s frame can never be timed above 250, so an LR
+  rate bounded between 300 and 550 kbit/s is reported as 500 kbit/s, flagged as proven by frame timing. Below 300 it
+  stays "not known" (the timing cannot prove 250); above 550 too (no LR frame is that fast — the timestamps would be
+  unsound). The method is checked on every bench run against the decoded 802.11n rates, which a bound must never
+  exceed.
+
+Builds (UART and USB) without warnings; PC tests 118/118 (9 of them the timing bound). The head unit's module was
+updated over its UART to 0.19 (7/7, every setting kept). Pending on hardware: the LR calibration of the rate field
+(the boat module sends LR frames the head unit's module times) and the boat module's own update to 0.19.
+
+## 0.18.0 — 2026‑09‑29
 
 - **Link rate report** (`ID_WIFI_SURVEY` GETTING v1): the PHY rate the other end of the link transmits at - the access
   point for a station, every joined station for an access point - counted in a short sniffer window (200 ms by

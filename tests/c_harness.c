@@ -190,10 +190,12 @@ int main(int argc, char **argv)
             } else if (!strcmp(cmd, "begin")) { /* window phy */
                 sscanf(line, "%*s %u %u", &a, &b);
                 linkrate_begin((const uint8_t (*)[6])peers, lr, np, (uint16_t)a, (uint8_t)b);
-            } else if (!strcmp(cmd, "frame")) { /* mac rssi sig_mode rate mcs cwb sgi */
-                sscanf(line, "%*s %63s %d %u %u %u %u %u", hx, &r, &a, &b, &c, &d, &e);
+            } else if (!strcmp(cmd, "frame")) { /* mac rssi sig_mode rate mcs cwb sgi [ts_us len aggregated] */
+                unsigned ts = 0, ln = 0, ag = 0;
+                sscanf(line, "%*s %63s %d %u %u %u %u %u %u %u %u", hx, &r, &a, &b, &c, &d, &e, &ts, &ln, &ag);
                 if (unhex(hx, mac, 6) == 6)
-                    linkrate_frame(mac, (int8_t)r, (uint8_t)a, (uint8_t)b, (uint8_t)c, d != 0, e != 0);
+                    linkrate_frame(mac, (int8_t)r, (uint8_t)a, (uint8_t)b, (uint8_t)c, d != 0, e != 0, ts,
+                                   (uint16_t)ln, ag != 0);
             } else if (!strcmp(cmd, "pages")) {
                 printf("N %d\n", linkrate_total());
                 for (int i = 0;; i++) {

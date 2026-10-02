@@ -37,12 +37,21 @@ def find_at(d, route, tries=6):
     return None, None
 
 
-def measure(d, window, timeout, traffic=False):
+# Burst frames: CONTENT v7 of ID_WIFI_SURVEY (a version nothing uses) to address 200 (nobody): the near module relays
+# them like any foreign frame, the far one passes them to its port, where no device takes them.
+BURST = SB.encode(200, SB.mode(SB.CONTENT, 7), SB.ID_WIFI_SURVEY, bytes(250))
+
+
+def measure(d, window, timeout, traffic=False, burst=0):
     """Pages of one window, or the response code when the module refused. With `traffic` small requests go to the
     module through the link while the window is open, so that its peer - this side's station - has frames to send
-    (an idle link from the host side carries nothing an access point could time)."""
+    (an idle link from the host side carries nothing an access point could time). With `burst` that many large
+    frames go through the link at once, back to back: what the timing bound needs."""
     d.rx.clear()
     d.send(SB.GETTING, V, SB.ID_WIFI_SURVEY, SB.linkrate_payload(window))
+    if burst:
+        time.sleep(0.03)  # the request first: the window opens when it arrives
+        d.p.write(BURST * burst)
     if traffic:
         until = time.time() + (window or SB.LINKRATE_WINDOW_DEF) / 1000.0
         while time.time() < until:
@@ -70,9 +79,12 @@ def show(pages):
                                                                             p['rssi'], p['phy']))
         for r in p['rates']:
             what = ('%.1f Mbit/s' % (r['kbps'] / 1000.0)) if r['kbps'] else 'rate not known'
+            if r.get('by_timing'):
+                what += ' (proven by frame timing)'
             extra = ' MCS%d' % r['code'] if r['kind'] == 'ht' else ' code 0x%02X' % r['code']
-            print('    %-5s%s%s%s  %s  %d frames' % (r['kind'], extra, ' SGI' if r['sgi'] else '',
-                                                  ' 40 MHz' if r['mhz'] == 40 else '', what, r['frames']))
+            bound = ('  timing bound %d kbit/s' % r['bound_kbps']) if r.get('bound_kbps') else ''
+            print('    %-5s%s%s%s  %s  %d frames%s' % (r['kind'], extra, ' SGI' if r['sgi'] else '',
+                                                    ' 40 MHz' if r['mhz'] == 40 else '', what, r['frames'], bound))
 
 
 def main():
@@ -81,6 +93,10 @@ def main():
     ap.add_argument('--baud', type=int, default=921600)
     ap.add_argument('--route', type=int, default=0, help='address of the module to measure; 0 = the nearest')
     ap.add_argument('--window', type=int, default=0, help='ms, 0 = the module default (200)')
+    ap.add_argument('--burst', type=int, default=0,
+                    help='large frames to push through the link at once during the window (the timing bound needs '
+                         'frames back to back; they go to address 200, which nobody answers)')
+    ap.add_argument('--windows', type=int, default=1, help='measure this many windows and keep every page')
     ap.add_argument('--traffic', action='store_true',
                     help='send small requests through the link during the window (for an access point measured from '
                          'its station side, whose uplink is otherwise idle)')
@@ -103,11 +119,17 @@ def main():
     window = a.window or SB.LINKRATE_WINDOW_DEF
     time.sleep(1.1)  # a window may have run just before (the app polls): keep the gap
     t0 = time.time()
-    pages, code = measure(d, a.window, window / 1000.0 + 3, traffic=a.traffic)
+    pages, code = measure(d, a.window, window / 1000.0 + 3, traffic=a.traffic, burst=a.burst)
     took = time.time() - t0
     if not check('GETTING v1 answered with pages (%.2f s for a %d ms window)' % (took, window), pages, str(code)):
         sys.exit(1)
     show(pages)
+    more = []
+    for _ in range(a.windows - 1):
+        time.sleep(1.1)
+        extra, _ = measure(d, a.window, window / 1000.0 + 3, traffic=a.traffic, burst=a.burst)
+        show(extra or [])
+        more += extra or []
     peers = [p for p in pages if 'peer' in p]
     check('the answer came after the window, not before', took >= window / 1000.0 * 0.9, '%.2f s' % took)
     if status.get('state') == 'CONNECTED':
@@ -120,6 +142,15 @@ def main():
               '%d pages, %s clients' % (len(peers), status.get('clients')))
     heard = [p for p in peers if p['frames']]
     check('frames were heard from the peer (there is traffic on the link)', heard, 'none')
+    all_rates = [r for p in pages + more if 'rates' in p for r in p['rates']]
+    timed = [r for r in all_rates if r.get('bound_kbps') and r['kbps'] and not r.get('by_timing')]
+    if timed:  # the method's control: a timing bound must never exceed a rate the 802.11 tables give
+        check('the timing bound never exceeds a decoded rate (%d rates timed): the timestamps are sound' % len(timed),
+              all(r['bound_kbps'] <= r['kbps'] * 1.05 for r in timed),
+              str([(r['kind'], r['code'], r['kbps'], r['bound_kbps']) for r in timed]))
+    for r in [r for r in all_rates if r['kind'] == 'lr']:
+        print('  LR code 0x%02X: %s (timing bound %s kbit/s)' % (r['code'], '500 kbit/s, proven by frame timing'
+              if r.get('by_timing') else 'not proven', r.get('bound_kbps')))
     for p in heard:
         check('every rate of %s outside LR is decoded to kbit/s' % p['peer'],
               all(r['kbps'] > 0 for r in p['rates'] if r['kind'] not in ('lr', 'other')), str(p['rates']))

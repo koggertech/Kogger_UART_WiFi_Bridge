@@ -36,7 +36,7 @@ UDP. On the same port the module answers its own SBP address 87 and sends its Wi
 In the access‑point role the same board can be the boat‑side end: it bridges a sonar or autopilot
 UART to phones and laptops on its own network.
 
-## Key figures (firmware 0.18.0)
+## Key figures (firmware 0.19.0)
 
 | | |
 |---|---|
@@ -122,9 +122,10 @@ Flashing, the native‑USB variant and the bench checks are described in
   - 0.18.0: the first firmware update over the air - an access-point module updated through a head unit's relay
     (7/7, every setting kept); the link rate on both ends of a b/g/n link, 11n MCS7 with short guard interval both
     ways (`tools/bench_linkrate.py`); an image that could not be confirmed over a busy LR link rolled back to the
-    previous one at the next power-on.
-- **Not yet verified on hardware:** the channel survey in the access-point role; what the LR rate field of a
-  received frame means (0x1A seen on every frame of an LR link); data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
+    previous one at the next power-on;
+  - 0.19.0: the head unit's module updated over its UART (7/7, every setting kept).
+- **Not yet verified on hardware:** the 0.19 LR calibration (which rate the raw code 0x1A on an LR link is), and
+  the boat module's own update to 0.19 over the air; the channel survey in the access-point role; data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
   module updated from 0.12; two factory modules relaying to each other; the 0.11 transmit fix under a saturated 921600 port; an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
 
 The status of each release is in [CHANGELOG.md](CHANGELOG.md).
