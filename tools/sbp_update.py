@@ -125,6 +125,24 @@ def uptime(d, timeout=1.5):
     return SB.parse_link(f.payload)['uptime'] if f else None
 
 
+def reboot_report(d, since, what):
+    """How the module came back after a reboot request: version, uptime, the reason of its last reset and how long
+    after the request it booted. An image that dies early comes back on the old one with PANIC or a watchdog as the
+    reason; a bootloader that did not take the new image comes back with SW, booted right after the request."""
+    d.rx = [f for f in d.rx if not (f.id == SB.ID_WIFI and f.ver == 1)]
+    d.send(SB.GETTING, 1, SB.ID_WIFI)
+    f = d.wait(lambda f: f.id == SB.ID_WIFI and f.ver == 1 and f.type == SB.CONTENT and not f.resp, 2.0)
+    v = d.version(1.0)
+    if not f:
+        print('      after %s: no link report (version %s)' % (what, v))
+        return None
+    link = SB.parse_link(f.payload)
+    booted = time.monotonic() - since - link['uptime']
+    print('      after %s: version %s, uptime %d s, last reset %s, booted %.0f s after the request' % (
+          what, v and v[1], link['uptime'], link.get('reset'), booted))
+    return link
+
+
 def wait_confirmed(d):
     """Keep talking to the new image (the host evidence) until it has run long enough to confirm."""
     print('keeping the new image busy until it has run %d s (it confirms itself after 60 s) ...' % CONFIRM_WAIT_S)
@@ -311,7 +329,9 @@ def main():
         check('module keeps running %s, bootMode 0' % old_mm, v is not None and v[1] == old_mm and v[0] == 0, v)
     else:
         check('image accepted (ID_BOOT v1 -> OK)', ok and code == 1, code)
+        t_boot = time.monotonic()
         v = poll_version(d, new_mm, a.back_wait)
+        reboot_report(d, t_boot, 'ID_BOOT v1')
         check('module comes back reporting %s' % new_mm, v is not None and v[1] == new_mm, v)
         if a.expect_rollback:
             print('image must not confirm; waiting for the rollback (up to %d s) ...' % ROLLBACK_WAIT_S)
@@ -332,6 +352,7 @@ def main():
         t0 = time.monotonic()
         time.sleep(7.0)
         v = poll_version(d, want, a.back_wait)
+        reboot_report(d, t0, 'the proving reboot')
         up = uptime(d)
         rebooted = up is not None and up <= time.monotonic() - t0 + 2
         check('after the reboot (uptime %s s) the module reports %s: %s' % (

@@ -408,6 +408,8 @@ frames that end sent, received without error.
     rate whose bound is **300 to 550 kbit/s is therefore reported as 500**, with flag bit2 "proven by frame timing".
     Below 300 it stays 0 = not known (the timing cannot prove 250); above 550 too: no LR frame is faster than
     500 kbit/s, so such a bound means timestamps that cannot be trusted.
+  - **Measured 2026-10-02:** on an LR link every frame comes with code 0x1A, and that is **500 kbit/s**: frames back to
+    back through the link were bounded at 372-380 kbit/s in 6 of 6 windows (over 18 LR windows none above 500).
   - The method itself is checked: a bound must never exceed an 802.11n rate from the tables, which
     `tools/bench_linkrate.py` checks on every run. The bound needs frames back to back: `--burst N` pushes N large
     frames through the link, to address 200, which nobody listens to.

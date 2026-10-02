@@ -123,9 +123,10 @@ Flashing, the native‑USB variant and the bench checks are described in
     (7/7, every setting kept); the link rate on both ends of a b/g/n link, 11n MCS7 with short guard interval both
     ways (`tools/bench_linkrate.py`); an image that could not be confirmed over a busy LR link rolled back to the
     previous one at the next power-on;
-  - 0.19.0: the head unit's module updated over its UART (7/7, every setting kept).
-- **Not yet verified on hardware:** the 0.19 LR calibration (which rate the raw code 0x1A on an LR link is), and
-  the boat module's own update to 0.19 over the air; the channel survey in the access-point role; data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
+  - 0.19.0: both modules updated, one over its UART and one over the air (7/7 each, every setting kept); the LR
+    rate field calibrated by frame timing: code 0x1A is 500 kbit/s (bound 372-380 kbit/s in 6 of 6 windows).
+- **Not yet verified on hardware:** the timing bound's control on 802.11n frames (none were timed: they came
+  aggregated); the channel survey in the access-point role; data at 5 Mbaud (the bench adapter stops at 2 Mbaud); the kept station lines of a
   module updated from 0.12; two factory modules relaying to each other; the 0.11 transmit fix under a saturated 921600 port; an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
 
 The status of each release is in [CHANGELOG.md](CHANGELOG.md).

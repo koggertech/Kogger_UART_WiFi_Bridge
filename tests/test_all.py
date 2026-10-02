@@ -590,6 +590,64 @@ def linkrate_tests(exe):
           and old['rates'][0]['kbps'] == 500 and 'bound_kbps' not in old['rates'][0], str(old))
 
 
+def flasher_tests():
+    """tools/flasher (internal, Russian window): the firmware file checks, the parts, the progress parsing and the
+    'not found' path with esptool really run. Not in the public tree, where these checks are skipped."""
+    import importlib.machinery
+    import queue
+    path = os.path.join(ROOT, 'tools', 'flasher', 'kogger_wifi_flasher.pyw')
+    if not os.path.isfile(path):
+        print('SKIP  flasher: not in this tree')
+        return
+    fl = importlib.machinery.SourceFileLoader('kogger_wifi_flasher', path).load_module()
+    files = sorted(f for f in os.listdir(os.path.join(ROOT, 'dist')) if f.startswith('KoggerWiFi_') and f.endswith('.ufww'))
+    if not files:
+        check('flasher: a built .ufww to check against', False, 'dist/ is empty')
+        return
+    data = open(os.path.join(ROOT, 'dist', files[-1]), 'rb').read()
+    want = files[-1][len('KoggerWiFi_'):-len('.ufww')]
+    check('flasher: a release file is accepted with its version', fl.inspect_image(data) == want, want)
+
+    def refused(blob):
+        try:
+            fl.inspect_image(blob)
+        except ValueError:
+            return True
+        return False
+    check('flasher: a file that is no ESP image is refused', refused(b'KP1 sonar firmware' * 40))
+    bad = bytearray(data)
+    bad[12] = 2
+    check('flasher: an image for another chip is refused', refused(bytes(bad)))
+    bad = bytearray(data)
+    bad[5000] ^= 0xFF
+    check('flasher: a damaged file is refused (its SHA-256 no longer matches)', refused(bytes(bad)))
+    man, parts = fl.load_parts()
+    offs = sorted(int(o, 16) for o, _ in parts)
+    check('flasher: the parts are whole and sit where the build puts them (0x0, 0x8000, 0xf000; firmware 0x20000)',
+          offs == [0x0, 0x8000, 0xF000] and man['app_offset'] == '0x20000', str((offs, man['app_offset'])))
+    check('flasher: progress is read from esptool lines', fl.percent('Writing at 0x00020000 [==>   ] 35.2% 33/95')
+          == 35.2 and fl.percent('Writing at 0x00021000... (12 %)') == 12 and fl.percent('Stub flasher running.') is None)
+
+    def run_flash(ports):
+        q = queue.Queue()
+        real = fl.candidate_ports
+        fl.candidate_ports = lambda: ports
+        try:
+            fl.flash(os.path.join(ROOT, 'dist', files[-1]), q)
+        finally:
+            fl.candidate_ports = real
+        msgs = []
+        while not q.empty():
+            msgs.append(q.get_nowait())
+        return [m for m in msgs if m[0] == 'done']
+    done = run_flash([])
+    check('flasher: no serial port at all is reported as such, nothing written',
+          done and done[0][1] is False and done[0][3] == 'no_ports', str(done))
+    done = run_flash(['COM199'])  # esptool really runs, in this process, on a port that is not there
+    check('flasher: a port with no bootloader ends in "not found", nothing written',
+          done and done[0][1] is False and done[0][3] == 'not_found', str(done))
+
+
 def survey_tests(exe):
     """Channel survey arithmetic and pages (firmware/main/survey.c), read with host/sbpframe.parse_survey."""
     def run(script):
@@ -730,6 +788,7 @@ def portinfo_tests(exe):
 def main():
     py_tests()
     link_report_tests()
+    flasher_tests()
     with tempfile.TemporaryDirectory() as tmp:
         exe = build(tmp)
         if exe:

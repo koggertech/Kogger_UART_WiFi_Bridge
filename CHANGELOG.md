@@ -15,9 +15,17 @@ Newest first. `ID_VERSION` carries only major.minor, so every release raises the
   unsound). The method is checked on every bench run against the decoded 802.11n rates, which a bound must never
   exceed.
 
-Builds (UART and USB) without warnings; PC tests 118/118 (9 of them the timing bound). The head unit's module was
-updated over its UART to 0.19 (7/7, every setting kept). Pending on hardware: the LR calibration of the rate field
-(the boat module sends LR frames the head unit's module times) and the boat module's own update to 0.19.
+- `tools/sbp_update.py` reports how the module came back after each reboot it asks for: version, uptime, the reason
+  of its last reset, and how long after the request it booted - an image that dies early comes back on the old one
+  with PANIC or a watchdog as the reason.
+
+Builds (UART and USB) without warnings; PC tests pass. Verified on hardware: the head unit's module updated over
+its UART (7/7) and the access-point module behind it over the air (7/7, 12.1 KB/s, every setting kept; a first
+attempt came back on 0.18 for a reason not found - the reboot report above did not exist yet). **The LR rate field:
+code 0x1A, on every frame of an LR link, is 500 kbit/s** - frames sent back to back through the link were bounded at
+372-380 kbit/s in 6 of 6 windows, and a 250 kbit/s frame cannot be timed above 250. Over 18 LR windows no bound went
+above 500, as the physics requires. The planned control on 802.11n frames did not run: in b/g/n no pair was timed
+(the 11n data came aggregated, which the bound leaves out).
 
 ## 0.18.0 — 2026‑09‑29
 
