@@ -10,6 +10,7 @@ C compiler: $CC, else gcc/cc/clang on PATH, else MSVC (vswhere). No compiler -> 
 """
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -591,8 +592,9 @@ def linkrate_tests(exe):
 
 
 def flasher_tests():
-    """tools/flasher (internal, Russian window): the firmware file checks, the parts, the progress parsing and the
-    'not found' path with esptool really run. Not in the public tree, where these checks are skipped."""
+    """tools/flasher: the window's strings, the firmware file checks, the parts, the progress parsing and the
+    'not found' path with esptool really run. The file checks need a built .ufww in dist/; the public tree has none
+    (dist/ is not in git), so there they are skipped, and in the internal tree their absence is a failure."""
     import importlib.machinery
     import queue
     path = os.path.join(ROOT, 'tools', 'flasher', 'kogger_wifi_flasher.pyw')
@@ -600,8 +602,16 @@ def flasher_tests():
         print('SKIP  flasher: not in this tree')
         return
     fl = importlib.machinery.SourceFileLoader('kogger_wifi_flasher', path).load_module()
-    files = sorted(f for f in os.listdir(os.path.join(ROOT, 'dist')) if f.startswith('KoggerWiFi_') and f.endswith('.ufww'))
+    marks = {lang: {k: re.findall(r'%[sd%]', v) for k, v in t.items()} for lang, t in fl.TEXT.items()}
+    check('flasher: every window language has the English strings with the same % fields',
+          'en' in marks and all(m == marks['en'] for m in marks.values()), str(sorted(marks)))
+    dist = os.path.join(ROOT, 'dist')
+    files = sorted(f for f in (os.listdir(dist) if os.path.isdir(dist) else [])
+                   if f.startswith('KoggerWiFi_') and f.endswith('.ufww'))
     if not files:
+        if not os.path.isfile(os.path.join(ROOT, 'tools', 'export_public.py')):
+            print('SKIP  flasher file checks: no KoggerWiFi_*.ufww in dist/ (put a release file there to run them)')
+            return
         check('flasher: a built .ufww to check against', False, 'dist/ is empty')
         return
     data = open(os.path.join(ROOT, 'dist', files[-1]), 'rb').read()

@@ -3,6 +3,14 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## Flasher — 2026‑10‑06 (firmware unchanged, 0.19.0)
+
+- **Windows flasher** `tools/flasher` ([docs/FLASHER.md](docs/FLASHER.md)): one window, a firmware file and a Flash
+  button, for a module held in the ROM bootloader. Writes the bootloader, partition table, OTA data and the chosen
+  `.ufww`, keeps the settings. A single `KoggerWiFiFlasher_EN.exe` (Python and esptool inside) is attached to the
+  0.19.0 release. Verified on a PC (file checks, parts, runs without a port and without a bootloader, the packed
+  exe's self-test); flashing a real module with it is not verified yet.
+
 ## 0.19.0 — 2026‑10‑02
 
 - **A timing bound on the link rates** (`ID_WIFI_SURVEY` v1): two frames of one transmitter cannot overlap in the

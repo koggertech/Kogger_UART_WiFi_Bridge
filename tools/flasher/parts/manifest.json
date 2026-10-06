@@ -1,0 +1,23 @@
+{
+ "firmware": "0.19.0",
+ "app_offset": "0x20000",
+ "flash": {
+  "mode": "dio",
+  "freq": "80m",
+  "size": "4MB"
+ },
+ "files": {
+  "bootloader.bin": {
+   "offset": "0x0",
+   "sha256": "98051d83fb26557378038c6e6f60d0a1b29be1cbea59c8195119f0e837dc044a"
+  },
+  "partition-table.bin": {
+   "offset": "0x8000",
+   "sha256": "1b86379629900670bd43147c3a873a424695a67765fd1bdb28b1bffc21be137a"
+  },
+  "ota_data_initial.bin": {
+   "offset": "0xf000",
+   "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+  }
+ }
+}

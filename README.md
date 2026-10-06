@@ -60,6 +60,7 @@ are in the [datasheet](docs/KoggerWiFi_datasheet.pdf) and in [docs/DESIGN.md](do
 | Document | Contents |
 |---|---|
 | [docs/HARDWARE.md](docs/HARDWARE.md) | board, connectors, power, wiring, flashing without auto‑reset |
+| [docs/FLASHER.md](docs/FLASHER.md) | Windows flasher: firmware into a module in the bootloader, one window, no tools to install |
 | [hardware/](hardware/) | KiCad project of the board, schematic PDF, Gerbers, BOM, pick‑and‑place |
 | [docs/SBP_WIFI.md](docs/SBP_WIFI.md) | Kogger SBP contract: frame, common IDs, `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 |
 | [docs/NETWORK.md](docs/NETWORK.md) | station / access point, AP settings, address and DHCP, UART lines and their ports |
@@ -86,6 +87,11 @@ are in the [datasheet](docs/KoggerWiFi_datasheet.pdf) and in [docs/DESIGN.md](do
 | `LICENSES/` | license notices of included third‑party material (MAVLink generated code) |
 
 ## Quick start
+
+Just to put the firmware on a board: download `KoggerWiFiFlasher_EN.exe` and `KoggerWiFi_X.Y.Z.ufww` from the
+[releases](https://github.com/koggertech/Kogger_UART_WiFi_Bridge/releases) and follow [docs/FLASHER.md](docs/FLASHER.md).
+
+To build:
 
 ```
 python tests/test_all.py                       # PC tests, no hardware: "43 checks, 0 failed"
