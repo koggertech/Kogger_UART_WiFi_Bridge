@@ -40,5 +40,5 @@ The bootloader, partition table and OTA data are in `tools/flasher/parts/` with 
 the bootloader or the partition layout (`python tools/flasher/make_parts.py --build firmware/build-uart`).
 Windows Defender may distrust a fresh PyInstaller `.exe`; the `.pyw` does the same job.
 
-Status: the tool's checks pass on a PC (file checks, parts, a run with no port and with no bootloader); flashing a
-real module with it has not been verified yet.
+Status: the tool's checks pass on a PC (file checks, parts, a run with no port and with no bootloader). Verified on hardware
+(2026‑10‑06): the access‑point module of a boat setup flashed with it, every setting kept.

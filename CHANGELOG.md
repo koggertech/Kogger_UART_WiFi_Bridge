@@ -9,7 +9,8 @@ Newest first. `ID_VERSION` carries only major.minor, so every release raises the
   button, for a module held in the ROM bootloader. Writes the bootloader, partition table, OTA data and the chosen
   `.ufww`, keeps the settings. A single `KoggerWiFiFlasher_EN.exe` (Python and esptool inside) is attached to the
   0.19.0 release. Verified on a PC (file checks, parts, runs without a port and without a bootloader, the packed
-  exe's self-test); flashing a real module with it is not verified yet.
+  exe's self-test). Verified on hardware: the access‑point module of a boat setup flashed with it, every setting
+  kept.
 
 ## 0.19.0 — 2026‑10‑02
 
