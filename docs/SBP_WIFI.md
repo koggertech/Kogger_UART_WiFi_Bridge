@@ -449,6 +449,9 @@ always on.
 - **GETTING v0**: CONTENT v0.
 - **CONTENT v0** `{U1 on, U2 seconds left}`, 3 bytes: 1 = the radio runs (seconds 0); 0 = off, seconds = what is
   left of the timer (0 = no timer). When the timer switches the radio on, CONTENT v0 goes to the subscribers unasked.
+  A subscriber on the network does not get it: the link is not back yet at that moment (seen on hardware). A host
+  learns that a module switched off over the network is back from `ID_WIFI` v0 (bit3 clear) once the module answers
+  again.
 
 While the radio is off:
 
@@ -462,8 +465,9 @@ While the radio is off:
 - Bridging stops (there is no network). Ports X1 and X2 and everything that arrives over a wire work as usual.
 
 When the radio is back, an access point starts as at boot and a station searches for its saved networks again. A
-station repeats its search every 15 s, so the link between two modules does not come back at once: measured once
-(2026-10-23), the station joined 16 s after the access point was back (61 s after a 45 s switch-off).
+station repeats its search every 15 s, so the link between two modules comes back within one search period, not
+at once: measured twice (2026-10-23), the station joined 16 s and 9.8 s after the access point was back (switch-offs
+of 45 s and 30 s).
 
 Checks: the request and the answer on the PC (`firmware/main/rfoff.c`, `tests/test_all.py`), on hardware with
 `tools/bench_rf.py` (the module on the port; a module behind a bridge with `--route 88`: the near module watches it

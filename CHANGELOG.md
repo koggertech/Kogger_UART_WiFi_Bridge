@@ -35,6 +35,14 @@ Retransmissions over 10 windows each, office, -46 dBm: 7 of 190 frames access po
 station -> access point (1.6 %); single windows of about 20 frames ranged 0-19 %, which is why a share wants many
 windows. The LED was checked by eye on a module: it shows the link as described.
 
+Later the same day a host application with the switch-off and the retransmission share passed against both modules.
+Over the wire: off until "on", then back on; the station joined its access point 5.9 s later. Over the air for 30 s:
+the station joined again 9.8 s after the access point's timer (16 s in the run above - within one 15 s search
+period). The access point's own report that its radio was back never reached the host - the link was still down -
+so the host saw the return in the state report ([docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4b now says so).
+Retransmissions access point -> station 3.1-5.3 %; station -> access point without load only a frame or two per
+window, too few for a share.
+
 ## Flasher — 2026‑10‑06 (firmware unchanged, 0.19.0)
 
 - **Windows flasher** `tools/flasher` ([docs/FLASHER.md](docs/FLASHER.md)): one window, a firmware file and a Flash
