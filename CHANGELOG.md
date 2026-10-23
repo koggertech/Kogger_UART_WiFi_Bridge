@@ -3,6 +3,38 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.20.0 — 2026‑10‑23
+
+- **The radio switched off, to swap an antenna** (`ID_WIFI_RF` 0x5A, [docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4b):
+  `SETTING v0 {KEY, U1 on, U2 seconds}` stops the whole radio until its timer runs out, an "on" request or a reboot;
+  nothing is saved. A request that came over the network needs a timer of 1–600 s: a module reached through its own
+  radio has to come back by itself. The answer leaves before the radio stops; a start the driver refuses is tried
+  again every 5 s. While the radio is off `ID_WIFI` v0 reports IDLE with the new flag bit3, and whatever would start
+  it (scan, join, channel sweep, link rate window, access point changes) is refused with ERR_RUNTIME.
+- **Retransmissions in the link rate report** (`ID_WIFI_SURVEY` v1, [docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4a): the
+  page ends with the number of the peer's frames that carried the Retry bit; retries / frames is the share of its
+  retransmissions. Each end sees the other's, so the two modules of a link give both directions. The page grows by
+  2 bytes; older readers read the same first bytes.
+- **The status LED shows the link** ([docs/HARDWARE.md](docs/HARDWARE.md)): lit steadily without a link, a 100 ms
+  flash every 2.1 s with one. A link: a station joined with an address, an access point with a station joined. The
+  blink of an armed BOOT reset is unchanged.
+- `tools/bench_rf.py` checks the switch-off on hardware: over the wire, and over the air (`--route 88`), where the
+  module on the port watches the far access point leave the air and come back without a reboot.
+
+Builds (UART and USB) without warnings; PC tests pass. Verified on hardware: a station module (on a head unit's
+UART, its access point out of range) updated over its UART (7/7, every setting kept), then `tools/bench_rf.py` over
+the wire 23/23: switched off without a timer it reported IDLE with flag bit3 and refused a scan, a join, a channel
+sweep and a link rate window, and stayed off; a 20 s timer set while off brought the radio back after 20.5 s, searching
+again at once; an "on" request ended a 30 s switch-off at once; the module never rebooted, and its settings read the
+same afterwards. Then the access-point module behind it, over the air: updated 7/7 (7.4 KB/s, 2 repositions, every
+setting kept), and `tools/bench_rf.py --route 88` 13/13: a switch-off without a timer or for 601 s refused with
+ERR_PAYLOAD; one for 45 s accepted, its answer in before the radio stopped; the station lost the access point after
+9 s (beacon timeout), its own scan no longer found it, and it joined again 61 s after the switch-off - 16 s after the
+access point was back; the access point did not reboot, and both modules' settings read the same afterwards.
+Retransmissions over 10 windows each, office, -46 dBm: 7 of 190 frames access point -> station (3.7 %), 3 of 191
+station -> access point (1.6 %); single windows of about 20 frames ranged 0-19 %, which is why a share wants many
+windows. The LED was checked by eye on a module: it shows the link as described.
+
 ## Flasher — 2026‑10‑06 (firmware unchanged, 0.19.0)
 
 - **Windows flasher** `tools/flasher` ([docs/FLASHER.md](docs/FLASHER.md)): one window, a firmware file and a Flash

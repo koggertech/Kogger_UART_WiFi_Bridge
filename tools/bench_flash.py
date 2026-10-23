@@ -11,10 +11,11 @@ rate and the next call cannot find it. After flashing the script keeps the port 
 asks for a reset (power-cycle without BOOT), and checks what the firmware says: over the SLIP text protocol, or
 over SBP when X1 speaks only SBP (0.13: a board on factory settings relays line 0, which locks X1 to SBP from the
 start, so no "* HELLO" comes). Exit code 0 = all checks PASS.
-Needs esptool >= 5 and pyserial.
+Needs esptool (4.x as in ESP-IDF 5.5, or >= 5) and pyserial.
 """
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -34,8 +35,37 @@ def check(name, cond, detail=''):
     return cond
 
 
+_major = None
+
+
+def esptool_major():
+    """Major version of the esptool this Python runs: 4 (ESP-IDF 5.5's) spells commands, options and their values
+    with underscores (write_flash, no_reset), 5 with hyphens; 5 still takes the old spelling, but only as deprecated."""
+    global _major
+    if _major is None:
+        out = subprocess.run([sys.executable, '-m', 'esptool', 'version'], stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True, timeout=60).stdout
+        m = re.search(r'(\d+)\.\d+', out)
+        if not m:
+            sys.exit('esptool not found for %s: %s' % (sys.executable, out.strip()[-300:]))
+        _major = int(m.group(1))
+    return _major
+
+
+def spell(args):
+    """Arguments written the esptool 5 way, turned into the 4.x spelling when that is what runs. Paths and
+    numbers are left alone: only words of letters and hyphens (commands, --options, choice values) change."""
+    if esptool_major() >= 5:
+        return list(args)
+    out = []
+    for a in args:
+        m = re.fullmatch(r'(--)?([a-z]+(?:-[a-z0-9]+)+)', a)
+        out.append((m.group(1) or '') + m.group(2).replace('-', '_') if m else a)
+    return out
+
+
 def esptool(port, *args, timeout=600):
-    cmd = [sys.executable, '-m', 'esptool', '--port', port, '--baud', '115200'] + list(args)
+    cmd = [sys.executable, '-m', 'esptool', '--port', port, '--baud', '115200'] + spell(args)
     r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
     return r.returncode, r.stdout
 
@@ -56,8 +86,8 @@ def flash(port, build_dir, wait_s):
         time.sleep(2)
     for attempt in range(1, 4):
         rc, out = subprocess.run(
-            [sys.executable, '-m', 'esptool', '--port', port, '--baud', '115200', '--before', 'no-reset-no-sync',
-             '--after', 'no-reset-stub', 'write-flash'] + args,
+            [sys.executable, '-m', 'esptool', '--port', port, '--baud', '115200']
+            + spell(['--before', 'no-reset-no-sync', '--after', 'no-reset-stub', 'write-flash'] + args),
             cwd=build_dir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=900).returncode, None
         if rc == 0:
             return check('flash written, hashes verified by esptool (attempt %d)' % attempt, True)

@@ -125,7 +125,7 @@ def build(tmp):
     kind, tool = find_compiler()
     srcs = [os.path.join(ROOT, 'tests', 'c_harness.c')] + [os.path.join(FW, f) for f in
                                                           ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c', 'portinfo.c',
-                                                           'bootkey.c', 'survey.c', 'linkrate.c')]
+                                                           'bootkey.c', 'survey.c', 'linkrate.c', 'led.c', 'rfoff.c')]
     exe = os.path.join(tmp, 'c_harness.exe' if os.name == 'nt' else 'c_harness')
     if kind == 'gcc':
         cmd = [tool, '-std=c99', '-O2', '-Wall', '-Wextra', '-Werror', '-I', FW, '-o', exe] + srcs
@@ -456,6 +456,8 @@ def link_report_tests():
     check('py: ID_WIFI v1 of 0.11 (23 B): reset reason SW', d.get('reset') == 'SW' and 'req_drops' not in d)
     d = SB.parse_link(base + bytes([3]) + (7).to_bytes(4, 'little'))
     check('py: ID_WIFI v1 of 0.14 (27 B): reset reason and 7 dropped requests', d.get('reset') == 'SW' and d.get('req_drops') == 7)
+    st = SB.parse_status(bytes([0, 8]) + bytes(36) + bytes([0]))
+    check('py: ID_WIFI v0 flags bit 3 = radio switched off (0.20)', st['rf_off'] and not st['auto'] and not st['saved'], st)
 
 
 def bootkey_tests(exe):
@@ -487,6 +489,58 @@ def bootkey_tests(exe):
     check('bootkey: down since polling started is ignored', out == '.' * len(out))
     out = run('d' * 50 + 'u' + 'd' * 200 + 'uu')
     check('bootkey: after that a real press works', out.endswith('**R'), out[-5:])
+
+
+def led_tests(exe):
+    """Status LED (firmware/main/led.c), 50 ms per poll: lit without a link; with one a 100 ms flash, then 2 s dark."""
+    def run(seq, start=0):
+        return subprocess.run([exe, 'led', seq, str(start)], stdout=subprocess.PIPE, text=True).stdout.strip()
+
+    period = '**' + '.' * 40
+    out = run('n' * 40)
+    check('led: no link: lit steadily', out == '*' * 40, out)
+    out = run('n' * 10 + 'l' * 84)
+    check('led: link: a 100 ms flash at once, 2 s dark, the next flash', out == '*' * 10 + period * 2, out)
+    out = run('l' * 50 + 'n' * 3 + 'l' * 3)
+    check('led: link lost: lit at once; back: flashes at once', out == period + '**' + '.' * 6 + '***' + '**.', out)
+    out = run('l' * 126, 0xFFFFFFFF - 1000)
+    check('led: the millisecond clock wrapping keeps the period', out == period * 3, out)
+
+
+def rfoff_tests(exe):
+    """Radio switch-off request and answer (firmware/main/rfoff.c), built with host/sbpframe.rf_payload/parse_rf."""
+    def run(lines):
+        return [x for x in subprocess.run([exe, 'rfoff'], input=NL.join(lines) + NL, stdout=subprocess.PIPE,
+                                          text=True).stdout.split(NL) if x]
+
+    other_key = (0x12345678).to_bytes(4, 'little')
+    cases = [  # name, from the network, payload, (code, on, secs) - on/secs only checked when accepted
+        ('wire: off until on or a reboot', 0, SB.rf_payload(False, 0), (1, 0, 0)),
+        ('wire: off for 30 s', 0, SB.rf_payload(False, 30), (1, 0, 30)),
+        ('wire: off for 65535 s', 0, SB.rf_payload(False, 65535), (1, 0, 65535)),
+        ('network: off for 1 s', 1, SB.rf_payload(False, 1), (1, 0, 1)),
+        ('network: off for %d s, the longest' % SB.RF_NET_MAX_S, 1, SB.rf_payload(False, SB.RF_NET_MAX_S),
+         (1, 0, SB.RF_NET_MAX_S)),
+        ('network: off without a timer is refused (ERR_PAYLOAD)', 1, SB.rf_payload(False, 0), (3,)),
+        ('network: off for %d s is refused' % (SB.RF_NET_MAX_S + 1), 1, SB.rf_payload(False, SB.RF_NET_MAX_S + 1), (3,)),
+        ('on, from either side; its seconds are ignored', 1, SB.KEY + bytes([1, 5, 0]), (1, 1, 0)),
+        ('on over a wire', 0, SB.rf_payload(True), (1, 1, 0)),
+        ('a wrong key: ERR_KEY', 0, other_key + bytes([0, 30, 0]), (7,)),
+        ('no payload: ERR_KEY', 0, b'', (7,)),
+        ('key only: ERR_PAYLOAD', 0, SB.KEY, (3,)),
+        ('one byte too long: ERR_PAYLOAD', 0, SB.rf_payload(False, 30) + bytes(1), (3,)),
+        ('on = 2: ERR_PAYLOAD', 0, SB.KEY + bytes([2, 0, 0]), (3,)),
+    ]
+    out = run(['parse %d %s' % (net, p.hex() or '-') for _, net, p, _ in cases])
+    for (name, _, _, want), got in zip(cases, out + [''] * len(cases)):
+        f = got.split()[1:]
+        ok = len(f) == 3 and int(f[0]) == want[0] and (want[0] != 1 or (int(f[1]), int(f[2])) == want[1:])
+        check('rfoff: ' + name, ok, got)
+    states = [(1, 0, dict(on=True, left=0)), (0, 0, dict(on=False, left=0)), (0, 30, dict(on=False, left=30)),
+              (0, 65535, dict(on=False, left=65535)), (1, 30, dict(on=True, left=0))]
+    out = run(['state %d %d' % (on, left) for on, left, _ in states])
+    ok = len(out) == len(states) and all(SB.parse_rf(bytes.fromhex(o.split()[1])) == d for o, (_, _, d) in zip(out, states))
+    check('rfoff: CONTENT v0 {on, seconds left} reads back with parse_rf (a radio that runs has no timer)', ok, out)
 
 
 def linkrate_tests(exe):
@@ -587,8 +641,29 @@ def linkrate_tests(exe):
     out = run(['peer %s 1' % a, 'begin 200 0', lr(1000, 500), lr(11000, 600), 'pages'])
     raw = bytes.fromhex([l for l in out if l.startswith('P ')][0].split()[1])
     old = SB.parse_linkrate(raw[:16 + 9 * raw[14]])
-    check('linkrate: a reader of the 0.18 layout reads the same first 16 + 9n bytes', len(raw) == 16 + 13 * raw[14]
+    check('linkrate: a reader of the 0.18 layout reads the same first 16 + 9n bytes', len(raw) == 16 + 13 * raw[14] + 2
           and old['rates'][0]['kbps'] == 500 and 'bound_kbps' not in old['rates'][0], str(old))
+    old = SB.parse_linkrate(raw[:16 + 13 * raw[14]])
+    check('linkrate: a reader of the 0.19 layout reads the same first 16 + 13n bytes', 'retries' not in old
+          and old['rates'][0]['bound_kbps'] == 400, str(old))
+
+    # 0.20 retransmissions: frames from the peer with the Retry bit, after the bounds
+    fr = lambda who, ts, rt, m=7: 'frame %s -45 1 0 %d 0 1 %d 1500 0 %d' % (who, m, ts, rt)  # noqa: E731
+    out = run(['peer %s 0' % a, 'peer %s 0' % b, 'begin 200 4', fr(a, 1000, 0), fr(a, 2000, 1), fr(a, 3000, 0),
+               fr(a, 4000, 1, 5), fr(a, 5000, 0), fr(b, 1000, 1), fr(x, 1500, 1), 'pages'])
+    pages = [SB.parse_linkrate(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')]
+    pa, pb = pages[0], pages[1]
+    check('linkrate: retransmissions counted per peer, whatever their rate (2 of 5 frames)',
+          (pa.get('retries'), pa['frames'], pa.get('retry_share')) == (2, 5, 0.4), str(pa))
+    check('linkrate: another peer keeps its own count; a stranger counts nowhere',
+          (pb.get('retries'), pb['frames']) == (1, 1), str(pb))
+    out = run(['peer %s 0' % a, 'begin 200 4', fr(a, 1000, 0), fr(a, 2000, 0), 'pages'])
+    p0 = [SB.parse_linkrate(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')][0]
+    check('linkrate: no retransmission: 0, share 0', (p0.get('retries'), p0.get('retry_share')) == (0, 0.0), str(p0))
+    out = run(['peer %s 0' % a, 'begin 200 4', 'pages'])
+    p0 = [SB.parse_linkrate(bytes.fromhex(l.split()[1])) for l in out if l.startswith('P ')][0]
+    check('linkrate: a peer that sent nothing: 0 retransmissions, no share (nothing to divide)',
+          (p0['frames'], p0.get('retries'), p0.get('retry_share')) == (0, 0, None), str(p0))
 
 
 def flasher_tests():
@@ -807,6 +882,8 @@ def main():
             survey_tests(exe)
             linkrate_tests(exe)
             bootkey_tests(exe)
+            led_tests(exe)
+            rfoff_tests(exe)
     failed = [n for n, ok in results if not ok]
     print(NL + '%d checks, %d failed' % (len(results), len(failed)))
     sys.exit(1 if failed else 0)

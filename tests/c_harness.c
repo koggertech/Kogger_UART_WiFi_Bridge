@@ -14,6 +14,8 @@
  *   c_harness portinfo       -> stdin script (clock N | up/down PORT HEX | rx/tx PORT N | mrx/mtx PORT |
  *                               p0 PORT FLAGS SLIP | p1 PORT): units cut by kframe as in the firmware,
  *                               "P0 hex" / "P1 hex" per page
+ *   c_harness led SEQ [MS]   -> status LED per 50 ms poll ('l' = linked): '*' lit, '.' dark
+ *   c_harness rfoff          -> stdin "parse NET HEX" -> "P code on secs"; "state ON LEFT" -> "S hex"
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,8 +25,10 @@
 #include "frame.h"
 #include "kframe.h"
 #include "kpack.h"
+#include "led.h"
 #include "portinfo.h"
 #include "proto.h"
+#include "rfoff.h"
 #include "sbp.h"
 #include "linkrate.h"
 #include "survey.h"
@@ -119,6 +123,34 @@ int main(int argc, char **argv)
         putchar('\n');
         return 0;
     }
+    if (argc >= 3 && !strcmp(argv[1], "led")) { /* argv[2]: one poll per char, l = linked; argv[3]: clock at start */
+        led_t s = {0};
+        uint32_t t = argc >= 4 ? (uint32_t)strtoul(argv[3], NULL, 0) : 0;
+        for (const char *p = argv[2]; *p; p++, t += BOOTKEY_POLL_MS)
+            putchar(led_step(&s, *p == 'l', t) ? '*' : '.');
+        putchar('\n');
+        return 0;
+    }
+    if (argc >= 2 && !strcmp(argv[1], "rfoff")) { /* stdin: "parse NET HEX" (- = empty) | "state ON LEFT" */
+        static char line[256], hx[200];
+        while (fgets(line, sizeof line, stdin)) {
+            unsigned a = 0, b = 0;
+            uint8_t p[96];
+            if (sscanf(line, "parse %u %199s", &a, hx) == 2) {
+                int n = unhex(hx, p, sizeof p);
+                rfoff_req_t r = {0};
+                uint8_t c = rfoff_parse(p, n < 0 ? 0 : (size_t)n, a != 0, &r);
+                printf("P %u %u %u\n", c, r.on ? 1u : 0u, r.secs);
+            } else if (sscanf(line, "state %u %u", &a, &b) == 2) {
+                uint8_t q[RFOFF_STATE_LEN];
+                rfoff_state(q, a != 0, (uint16_t)b);
+                printf("S ");
+                hex(q, sizeof q);
+                printf("\n");
+            }
+        }
+        return 0;
+    }
     if (argc >= 2 && !strcmp(argv[1], "survey")) {
         static char line[512], hx[64];
         static uint8_t page[SURVEY_PAGE_LEN], mac[6], bss[6], own[6];
@@ -190,12 +222,12 @@ int main(int argc, char **argv)
             } else if (!strcmp(cmd, "begin")) { /* window phy */
                 sscanf(line, "%*s %u %u", &a, &b);
                 linkrate_begin((const uint8_t (*)[6])peers, lr, np, (uint16_t)a, (uint8_t)b);
-            } else if (!strcmp(cmd, "frame")) { /* mac rssi sig_mode rate mcs cwb sgi [ts_us len aggregated] */
-                unsigned ts = 0, ln = 0, ag = 0;
-                sscanf(line, "%*s %63s %d %u %u %u %u %u %u %u %u", hx, &r, &a, &b, &c, &d, &e, &ts, &ln, &ag);
+            } else if (!strcmp(cmd, "frame")) { /* mac rssi sig_mode rate mcs cwb sgi [ts_us len aggregated retry] */
+                unsigned ts = 0, ln = 0, ag = 0, rt = 0;
+                sscanf(line, "%*s %63s %d %u %u %u %u %u %u %u %u %u", hx, &r, &a, &b, &c, &d, &e, &ts, &ln, &ag, &rt);
                 if (unhex(hx, mac, 6) == 6)
                     linkrate_frame(mac, (int8_t)r, (uint8_t)a, (uint8_t)b, (uint8_t)c, d != 0, e != 0, ts,
-                                   (uint16_t)ln, ag != 0);
+                                   (uint16_t)ln, ag != 0, rt != 0);
             } else if (!strcmp(cmd, "pages")) {
                 printf("N %d\n", linkrate_total());
                 for (int i = 0;; i++) {

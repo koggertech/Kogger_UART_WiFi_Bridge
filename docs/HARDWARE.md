@@ -46,13 +46,24 @@ the reverse‑polarity diode.
 
 | Part | Connection | Use |
 |---|---|---|
-| LED VD1 (green) | GPIO0 → 1 kΩ → LED → GND, lit when high | blinks while a reset with the BOOT button is armed (below), otherwise off |
+| LED VD1 (green) | GPIO0 → 1 kΩ → LED → GND, lit when high | the link (0.20, below); blinks while a reset with the BOOT button is armed |
 | Button SB1 | GPIO9 to GND, 10 kΩ pull‑up | held at power‑up: ROM download mode; held 5 s / 10 s while the firmware runs: resets (below) |
 | Pull‑ups 10 kΩ | GPIO2, GPIO8 | strapping pins for a normal boot |
 | EN | 10 kΩ pull‑up, 1 µF to GND | power‑on reset delay |
 | Test pads, bottom | TP1 DM (GPIO18), TP2 DP (GPIO19), TP3 TX / TP4 RX of line 1 | USB Serial/JTAG flashing, line 1 probing |
 
 There is no reset button and no auto‑reset circuit (DTR/RTS). The module resets when its supply is removed for 1–2 s.
+
+## Status LED (0.20)
+
+| LED | Means |
+|---|---|
+| lit steadily | powered, no link |
+| a 100 ms flash, then 2 s dark | a link |
+
+A link: a station joined to its access point with an address, or an access point with at least one station joined. A
+radio switched off over SBP (`ID_WIFI_RF`, [SBP_WIFI.md](SBP_WIFI.md) §4b) has no link either. While a reset with the
+BOOT button is armed, its blink (below) takes the LED. Up to 0.19 the LED was dark except for that blink.
 
 ## Resets with the BOOT button (0.13)
 

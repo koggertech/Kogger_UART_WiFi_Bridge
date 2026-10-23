@@ -1,10 +1,12 @@
 /*
  * manager.h - Wi-Fi control (station: saved networks in NVS, search, reconnect; access point:
- * start, clients) and both control protocols: text lines over SLIP (docs/PROTOCOL.md) and
- * ID_WIFI / ID_WIFI_NET over Kogger SBP (docs/SBP_WIFI.md).
+ * start, clients; the radio switched off on request) and both control protocols: text lines over
+ * SLIP (docs/PROTOCOL.md) and ID_WIFI / ID_WIFI_NET / ID_WIFI_SURVEY / ID_WIFI_RF over Kogger SBP
+ * (docs/SBP_WIFI.md).
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -29,3 +31,10 @@ void manager_on_ctl(const uint8_t *line, size_t len);
 /** Queue an SBP frame addressed to us with the channel it came from (called from the link, line or
  *  network RX tasks via sbpdev_on_frame_ch; copies it). */
 void manager_post_sbp(const sbp_frame_t *f, const sbp_chan_t *ch);
+
+/** The module has a link: a station joined with an address, an access point with a station joined
+ *  (read from any task: the status LED, led.h). */
+bool manager_linked(void);
+
+/** The radio is switched off on request (ID_WIFI_RF, rfoff.h): nothing may start it but the manager. */
+bool manager_rf_off(void);

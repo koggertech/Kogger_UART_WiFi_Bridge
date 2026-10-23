@@ -191,7 +191,8 @@ been checked.
 1. The factory network `KoggerBridge` / `KoggerBridge` is public: a module on factory settings joins any network of
    that name and password and relays its lines there. Change it at setup, or build with other `WB_FACTORY_SSID` /
    `WB_FACTORY_PASS` ([SECURITY.md](../SECURITY.md)).
-2. The LED on GPIO0 shows only an armed BOOT reset (0.13). It could also show role, link and traffic.
+2. The LED on GPIO0 shows the link and an armed BOOT reset (0.20, [HARDWARE.md](HARDWARE.md)); it does not show the
+   role or the traffic.
 3. TCP: a packet may wait up to 5 s for window space. One shared send task can then hold the other line's packets for
    as long. UDP is not affected.
 4. Changing protocols and bandwidth in the AP role restarts the AP. The driver settings are assumed to survive

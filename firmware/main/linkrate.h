@@ -22,6 +22,11 @@
  * the parts of one aggregate share a timestamp. The method is checked against the decoded 802.11n rates, which a
  * bound must never exceed (tools/bench_linkrate.py).
  *
+ * Retransmissions (0.20): a frame whose Retry bit is set is a retransmission - its sender heard no acknowledgement
+ * for an earlier attempt, because that attempt or the acknowledgement was lost. The peer's frames with the bit are
+ * counted; retried / frames is the share of its retransmissions among the frames heard. Each end sees the other's:
+ * a station those of its access point, an access point those of each station.
+ *
  * Pure: no ESP-IDF calls, so the decoding and the pages are checked on the PC (tests/test_all.py). The sniffer
  * callback (Wi-Fi task) only calls linkrate_frame() while a window is open; the manager reads the pages after it
  * has closed the window, so no lock is needed.
@@ -59,7 +64,8 @@
 #define LINKRATE_PAGE_HEAD 16
 #define LINKRATE_ENTRY     9
 #define LINKRATE_BOUND     4  /**< a U4 timing bound per entry, after the entries (0.19) */
-#define LINKRATE_PAGE_MAX  (LINKRATE_PAGE_HEAD + LINKRATE_TOP * (LINKRATE_ENTRY + LINKRATE_BOUND))
+#define LINKRATE_TAIL      2  /**< U2 retransmitted frames of the peer, after the bounds (0.20) */
+#define LINKRATE_PAGE_MAX  (LINKRATE_PAGE_HEAD + LINKRATE_TOP * (LINKRATE_ENTRY + LINKRATE_BOUND) + LINKRATE_TAIL)
 
 /** kbit/s of a rate, 0 when not known (LR, or a code the 802.11 tables do not hold). */
 uint32_t linkrate_kbps(uint8_t kind, uint8_t code, uint8_t flags);
@@ -84,10 +90,10 @@ void linkrate_begin(const uint8_t peers[][6], const bool *lr, int n, uint16_t wi
 /**
  * Sniffer callback: one data frame received without error; counted when `addr2` is one of the peers. `ts_us` is the
  * radio's receive timestamp, `len` the frame length with FCS, `aggregated` whether it is part of an 802.11n
- * aggregate (left out of the timing bound).
+ * aggregate (left out of the timing bound), `retry` its Retry bit (a retransmission).
  */
 void linkrate_frame(const uint8_t *addr2, int8_t rssi, uint8_t sig_mode, uint8_t rate, uint8_t mcs, bool cwb,
-                    bool sgi, uint32_t ts_us, uint16_t len, bool aggregated);
+                    bool sgi, uint32_t ts_us, uint16_t len, bool aggregated, bool retry);
 
 /** How many peers there are to report (one page each). */
 int linkrate_total(void);
@@ -97,6 +103,7 @@ int linkrate_total(void);
  * is no such page. U1 index, U1 total, U1[6] peer, U2 window ms, U2 frames from the peer, S1 their average RSSI
  * (-128 = none), U1 negotiated PHY mode, U1 n, U1 0, then n entries {U1 kind, U1 code, U1 flags, U4 kbit/s
  * (0 = not known), U2 frames}, the most frames first, then (0.19) n x U4 timing bound in kbit/s (0 = no pair timed),
- * in the same order: a reader of the 0.18 layout reads the same first 16 + 9n bytes.
+ * in the same order, then (0.20) U2 frames from the peer with the Retry bit set. A reader of an older layout reads the
+ * same first 16 + 9n (0.18) or 16 + 13n (0.19) bytes.
  */
 int linkrate_page(int index, uint8_t *out);

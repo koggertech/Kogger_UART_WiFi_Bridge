@@ -1,6 +1,7 @@
 # The module as a Kogger SBP device
 
-Contract version 9 (firmware 0.19.0: a timing bound on the rates of `ID_WIFI_SURVEY` v1, which proves LR
+Contract version 10 (firmware 0.20.0: `ID_WIFI_RF` 0x5A, the radio switched off to swap an antenna, flag bit3
+of `ID_WIFI` v0, and retransmissions in `ID_WIFI_SURVEY` v1; version 9 = 0.19.0: a timing bound on the rates of `ID_WIFI_SURVEY` v1, which proves LR
 500 kbit/s; version 8 = 0.18.0: `ID_WIFI_SURVEY` v1, the link rate; version 7 = 0.16.0: `ID_WIFI_SURVEY`
 0x59, how busy each channel is; version 6 = 0.15.0:
 every port rate change saved at once; version 5 = 0.14.0: rates up to
@@ -106,7 +107,7 @@ itself.
 | Offset | Field |
 |---|---|
 | 0 | U1 state: 0 IDLE, 1 SEARCHING (looking for saved networks), 2 CONNECTING, 3 CONNECTED, 4 AP (access‑point role, AP running) |
-| 1 | U1 flags: bit0 auto‑connect, bit1 scan running, bit2 current network is saved |
+| 1 | U1 flags: bit0 auto‑connect, bit1 scan running, bit2 current network is saved, bit3 radio switched off on request (`ID_WIFI_RF`, 0.20) |
 | 2 | S1 RSSI, dBm (0 when not connected) |
 | 3 | U1 channel |
 | 4 | U1 security: 0 OPEN, 1 WEP, 2 WPA, 3 WPA2, 4 WPA/WPA2, 5 WPA3, 6 WPA2/WPA3, 7 ENTERPRISE, 8 OWE, 255 other/unknown |
@@ -413,9 +414,60 @@ frames that end sent, received without error.
   - The method itself is checked: a bound must never exceed an 802.11n rate from the tables, which
     `tools/bench_linkrate.py` checks on every run. The bound needs frames back to back: `--burst N` pushes N large
     frames through the link, to address 200, which nobody listens to.
+- **Retransmissions (0.20).** After the bounds comes **U2 frames with the Retry bit**: how many of the peer's frames
+  counted in the page came as retransmissions (bit 3 of the second frame control byte: the sender heard no
+  acknowledgement for an earlier attempt - that attempt or its acknowledgement was lost). **The retransmission share
+  is retries / frames.** The page is 16 + 13·n + 2 bytes; its first 16 + 9·n and 16 + 13·n bytes are as in 0.18 and
+  0.19, so older readers keep working.
+  - Each end sees the other's retransmissions: a station those of its access point, an access point those of each
+    station. Both directions of a link take one request to each module.
+  - It is a floor: a frame none of whose attempts arrived is not seen at all. A module does not know its own
+    retransmissions: ESP-IDF 5.5.5 has no public counter of them.
+  - A 200 ms window holds tens of frames, so the share is noisy: add up retries and frames over many windows.
 
 Checks: the decoding, the bound and the pages on the PC (`firmware/main/linkrate.c`, `tests/test_all.py`), on
 hardware with `tools/bench_linkrate.py` (a module behind a bridge too: `--route 88`).
+
+## 4b. `ID_WIFI_RF` = 0x5A - the radio switched off (firmware 0.20)
+
+To swap an antenna while the module runs. The whole radio stops (`esp_wifi_stop`: no reception, no transmission) and
+starts again when its timer runs out, on request, or at a reboot. Nothing is saved: after a reboot the radio is
+always on.
+
+- **SETTING v0** `{KEY, U1 on, U2 seconds}`, exactly 7 bytes. `on` = 0 switches the radio off for `seconds`
+  (0 = until an "on" request or a reboot); 1 switches it on now (the seconds are not read). The answer is the
+  acknowledgement and then CONTENT v0, also after a refusal (it shows the radio still on).
+  - ERR_KEY: no key. ERR_PAYLOAD: not 7 bytes, `on` above 1, or the request **came over the network** and asks for no
+    timer or for more than 600 s. A peer on the network reaches the module through that very radio: without a timer
+    the module would be cut off until a reboot (an access point on a boat: until its power is cycled). Over a wire
+    (X1, X2) the timer is optional, up to 65535 s.
+  - ERR_RUNTIME: the radio is busy - a channel sweep or a link rate window runs, a scan a host waits for, or a
+    firmware update (its transfer, or the first minute of a new image, before it has confirmed itself). A station's
+    search scan is simply dropped.
+  - The answer to "off" leaves **before** the radio stops: it stops 200 ms after the answer. "Off" again while off
+    only changes the timer: the last request decides. A start the driver refuses is tried again every 5 s.
+- **GETTING v0**: CONTENT v0.
+- **CONTENT v0** `{U1 on, U2 seconds left}`, 3 bytes: 1 = the radio runs (seconds 0); 0 = off, seconds = what is
+  left of the timer (0 = no timer). When the timer switches the radio on, CONTENT v0 goes to the subscribers unasked.
+
+While the radio is off:
+
+- `ID_WIFI` v0: state IDLE, flag bit3 set; an access point has no clients. The status LED is lit steadily: no link
+  ([HARDWARE.md](HARDWARE.md)).
+- Refused with ERR_RUNTIME: `ID_WIFI` v2 (scan) and v3 (connect), `ID_WIFI_SURVEY` SETTING v0 and v1,
+  `ID_WIFI_NET` SETTING v1 and v2 of a running access point (they would restart its radio). The text commands
+  `SCAN` and `CONNECT` answer `ERR BUSY radio off`.
+- Saved, and in effect once the radio is back: `ID_WIFI` v7 (radio power and mode; the power in effect reads 0
+  while off) and `ID_WIFI` v4 "auto-connect".
+- Bridging stops (there is no network). Ports X1 and X2 and everything that arrives over a wire work as usual.
+
+When the radio is back, an access point starts as at boot and a station searches for its saved networks again. A
+station repeats its search every 15 s, so the link between two modules does not come back at once: measured once
+(2026-10-23), the station joined 16 s after the access point was back (61 s after a 45 s switch-off).
+
+Checks: the request and the answer on the PC (`firmware/main/rfoff.c`, `tests/test_all.py`), on hardware with
+`tools/bench_rf.py` (the module on the port; a module behind a bridge with `--route 88`: the near module watches it
+leave the air and come back without a reboot).
 
 ## 5. X1: SBP and the IP bridge
 
@@ -433,8 +485,9 @@ carries SBP only.
 
 ## 6. ID choice
 
-`ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59 and board ID 87 were unused in KoggerApp when they
-were chosen. A version byte in SBP holds three bits, v0…v7, and all eight versions of `ID_WIFI` were taken, so the
+`ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59, `ID_WIFI_RF` 0x5A and board ID 87 were unused in
+KoggerApp when they were chosen. A version byte in SBP holds three bits, v0…v7, and all eight versions of `ID_WIFI` were taken, so the
 survey got an id of its own rather than a ninth version. The first three were unused in KoggerApp when chosen
 (September 2026). 0x57 ("W") sits in the middle of the empty range 0x41–0x63, away from the groups KoggerApp extends
-one by one; 0x58 is its neighbour.
+one by one; 0x58 is its neighbour. 0x5A (October 2026) is the next free code in that range; it is not a free version of
+`ID_WIFI_SURVEY` because it controls the radio, while that id measures it.

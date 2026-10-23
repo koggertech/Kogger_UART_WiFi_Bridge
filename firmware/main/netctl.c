@@ -9,6 +9,7 @@
 #include "sdkconfig.h"
 
 #include "link.h"
+#include "manager.h"
 #include "netcfg.h"
 #include "portinfo.h"
 #include "ports.h"
@@ -40,6 +41,16 @@ static void send(uint8_t ver, const uint8_t *p, size_t n)
 static bool running_ap(void)
 {
     return netcfg_role() == ROLE_AP;
+}
+
+/* The running access point takes access point and address settings at once, restarting its radio for the former;
+ * while the radio is switched off (ID_WIFI_RF) they are refused rather than left for an untried start. */
+static bool ap_radio_off(const sbp_frame_t *f)
+{
+    if (!running_ap() || !manager_rf_off())
+        return false;
+    sbpdev_ack(f, SBP_RESP_ERR_RUNTIME);
+    return true;
 }
 
 /* ---- v0 role ---------------------------------------------------------------------------------------- */
@@ -115,6 +126,8 @@ static void set_ap(const sbp_frame_t *f)
         sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
         return;
     }
+    if (ap_radio_off(f))
+        return;
     bool ok = netcfg_set_ap(&a);
     sbpdev_ack(f, ok ? SBP_RESP_OK : SBP_RESP_ERR_RUNTIME);
     send_ap();
@@ -164,6 +177,8 @@ static void set_ip(const sbp_frame_t *f)
         sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
         return;
     }
+    if (ap_radio_off(f))
+        return;
     bool ok = netcfg_set_ip(&c);
     sbpdev_ack(f, ok ? SBP_RESP_OK : SBP_RESP_ERR_RUNTIME);
     send_ip();
@@ -201,6 +216,9 @@ static uint8_t uart_state(int line, const line_cfg_t *c)
         return 1;
     int8_t tx, rx;
     uline_pins(&tx, &rx);
+#if CONFIG_WB_LINE1_XLAT
+    tx = c->tx_pin; /* a listen-only line runs without its TX on purpose: only RX tells whether it runs as saved */
+#endif
     if (uline_running())
         return tx == c->tx_pin && rx == c->rx_pin ? 1 : 2;
     return c->tx_pin >= 0 && c->rx_pin >= 0 ? 2 : 0;

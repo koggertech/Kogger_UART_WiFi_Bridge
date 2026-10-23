@@ -84,4 +84,7 @@ menu "HeadUnit Wi-Fi bridge"
         string "DHCP hostname of the Wi-Fi station"
         default "headunit-wifi"
 
+    # Line translators that are not part of the open tree: absent there, nothing changes.
+    orsource "private/Kconfig"
+
 endmenu

@@ -120,4 +120,4 @@ answers each with an ICMP "port unreachable" (~65 bytes). What those datagrams a
 2. **Not verified on hardware:** the 0.11 transmit fix under a saturated 921600 port; rollback of an unconfirmed image and an abandoned transfer; a host on X2; the native USB variant; the IP bridge daemon on a Linux host; LR range and throughput over distance.
 3. **Faster auto‑connect:** trying the last good network before scanning would save ≈ 2 s; not done.
 4. **Signed images** are not implemented ([UPDATE.md](UPDATE.md), [SECURITY.md](../SECURITY.md)).
-5. **The LED** on GPIO0 is unused.
+5. **The LED** on GPIO0 shows the link and an armed BOOT reset (0.20); it does not show the role or the traffic.

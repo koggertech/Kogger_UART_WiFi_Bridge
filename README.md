@@ -36,7 +36,7 @@ UDP. On the same port the module answers its own SBP address 87 and sends its Wi
 In the access‑point role the same board can be the boat‑side end: it bridges a sonar or autopilot
 UART to phones and laptops on its own network.
 
-## Key figures (firmware 0.19.0)
+## Key figures (firmware 0.20.0)
 
 | | |
 |---|---|
@@ -46,10 +46,12 @@ UART to phones and laptops on its own network.
 | Roles | station (default) or access point (open, WPA2, WPA2/WPA3; channels 1–11; up to 10 clients) |
 | Serial lines | X1 = UART0, X2 = UART1, equal for control and relay; 9600–5 000 000 baud, 8N1, set for each port; default 921600 on both |
 | Relay | per line: off, UDP (fixed peer, last ≤ 4 senders, or broadcast) or TCP client; frames up to 4096 B |
-| Control | Kogger SBP: `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59 and the common device IDs, from any line or the network |
+| Control | Kogger SBP: `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59, `ID_WIFI_RF` 0x5A and the common device IDs, from any line or the network |
+| Antenna swap | the radio switched off over SBP until a timer (needed when asked over the network, up to 600 s), an "on" request or a reboot (0.20) |
+| Status LED | lit steadily without a link, a 100 ms flash every 2.1 s with one (0.20) |
 | Update | over SBP, from a wire or (since 0.17) the network; A/B slots of 1.875 MiB; SHA‑256 check; confirmation after 60 s, rollback at 180 s |
 | Factory settings | station knowing the network `KoggerBridge` (build options `WB_FACTORY_SSID` / `WB_FACTORY_PASS`), lines relaying to 10.0.0.10:14444 / 14445; BOOT held 5 s resets the port rates, 10 s every setting |
-| Image size | 0.95 MB, 48 % of a slot (0.16.0, UART build) |
+| Image size | 0.95 MB, 49 % of a slot (0.20.0, UART build) |
 | Serial throughput | baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud |
 
 The serial line, not Wi‑Fi, is the bottleneck at these rates. Measured figures, test conditions and charts
@@ -62,7 +64,7 @@ are in the [datasheet](docs/KoggerWiFi_datasheet.pdf) and in [docs/DESIGN.md](do
 | [docs/HARDWARE.md](docs/HARDWARE.md) | board, connectors, power, wiring, flashing without auto‑reset |
 | [docs/FLASHER.md](docs/FLASHER.md) | Windows flasher: firmware into a module in the bootloader, one window, no tools to install |
 | [hardware/](hardware/) | KiCad project of the board, schematic PDF, Gerbers, BOM, pick‑and‑place |
-| [docs/SBP_WIFI.md](docs/SBP_WIFI.md) | Kogger SBP contract: frame, common IDs, `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58 |
+| [docs/SBP_WIFI.md](docs/SBP_WIFI.md) | Kogger SBP contract: frame, common IDs, `ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59, `ID_WIFI_RF` 0x5A |
 | [docs/NETWORK.md](docs/NETWORK.md) | station / access point, AP settings, address and DHCP, UART lines and their ports |
 | [docs/RELAY.md](docs/RELAY.md) | frame‑aware relay: framing, packing, buffers, back‑pressure, statistics |
 | [docs/UPDATE.md](docs/UPDATE.md) | firmware update over SBP: procedure, safety argument, test log |

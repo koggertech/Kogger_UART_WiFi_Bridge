@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.19.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.20.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.19.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.20.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,7 +62,7 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.19.0</b><br>2026‑09‑27<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.20.0</b><br>2026‑10‑23<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
@@ -115,9 +115,9 @@ laptops on its own network.</p>
       optional native USB Serial/JTAG build for line 0</td></tr>
   <tr><td class="k">Serial throughput</td><td>baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud, 400 KB/s at 4 Mbaud</td></tr>
   <tr><td class="k">Relay</td><td>KP1, KP2, UBX, MAVLink 1/2 (392 messages); frames ≤ 4096 B; packets ≤ 512 B; 24‑packet pool</td></tr>
-  <tr><td class="k">Control protocol</td><td>Kogger SBP (KP1): <code>ID_WIFI</code> 0x57, <code>ID_WIFI_NET</code> 0x58, common device IDs; IP bridge text commands over SLIP</td></tr>
+  <tr><td class="k">Control protocol</td><td>Kogger SBP (KP1): <code>ID_WIFI</code> 0x57, <code>ID_WIFI_NET</code> 0x58, <code>ID_WIFI_SURVEY</code> 0x59, <code>ID_WIFI_RF</code> 0x5A, common device IDs; IP bridge text commands over SLIP</td></tr>
   <tr><td class="k">Firmware update</td><td>over SBP, from a wire or the network (0.17); two 1.875 MiB slots; confirmation after 60 s, rollback at 180 s</td></tr>
-  <tr><td class="k">Firmware image</td><td>0.93 MB (47 % of a slot), ESP‑IDF 5.5.5</td></tr>
+  <tr><td class="k">Firmware image</td><td>0.95 MB (49 % of a slot), ESP‑IDF 5.5.5</td></tr>
   <tr><td class="k">Board</td><td>20 × 30 mm, 4 layers FR4 1.2 mm, ENIG; two JST GH 4‑pin connectors; KiCad 10 project in <code>hardware/</code></td></tr>
   <tr><td class="k">Supply</td><td>4.5–24 V on X1 pin 4 (reverse‑polarity diode, TI LMZM23601 3.3 V / 1 A module); consumption not measured</td></tr>
 </table>
@@ -149,7 +149,7 @@ laptops on its own network.</p>
 <ul>
   <li>UART lines: series resistors, Schottky clamps to GND and to a Zener‑held 3.3 V clamp rail.</li>
   <li>BOOT button on GPIO9; 10 kΩ pull‑ups on GPIO2/8/9; EN 10 kΩ + 1 µF. No reset button, no auto‑reset.</li>
-  <li>Green LED on GPIO0 (active high, blinks when a reset is armed). Bottom test pads: USB D−/D+, line 1 TX/RX.</li>
+  <li>Green LED on GPIO0 (active high): lit steadily without a link, a 100 ms flash every 2.1 s with one (0.20); blinks when a reset is armed. Bottom test pads: USB D−/D+, line 1 TX/RX.</li>
   <li>X2 is wired to GPIO5/GPIO4; the firmware can move line 1 to GPIO 0, 1, 3, 4, 5, 6, 7 or 10 on other boards.</li>
 </ul>
 </div>
@@ -294,7 +294,7 @@ the network, X1 speaks only SBP. All multi‑byte fields are little‑endian. Fu
 <table class="lay">
   <tr><th>Offset</th><th>CONTENT v0 (state)</th></tr>
   <tr><td>0</td><td>U1 state: 0 IDLE, 1 SEARCHING, 2 CONNECTING, 3 CONNECTED, 4 AP</td></tr>
-  <tr><td>1</td><td>U1 flags: bit0 auto‑connect, bit1 scan running, bit2 current network saved</td></tr>
+  <tr><td>1</td><td>U1 flags: bit0 auto‑connect, bit1 scan running, bit2 current network saved, bit3 radio switched off (0.20)</td></tr>
   <tr><td>2 / 3 / 4</td><td>S1 RSSI dBm / U1 channel / U1 security (0 open, 1 WEP, 2 WPA, 3 WPA2, 4 WPA/WPA2, 5 WPA3, 6 WPA2/WPA3, 7 enterprise, 8 OWE)</td></tr>
   <tr><td>5 / 6 / 7</td><td>U1 last disconnect reason (wifi_err_reason_t) / U1 category (0 none, 1 no AP, 2 auth, 3 assoc, 4 lost, 5 other) / U1 AP clients</td></tr>
   <tr><td>8–13</td><td>BSSID</td></tr>
@@ -312,7 +312,17 @@ frames, transmitters, strongest RSSI, noise floor, flags (own channel, usable by
 trusted) and how much of the busy figure is the module's own network. <code>GETTING v1 {U2 window ms}</code> (0.18)
 reports the <b>link rate</b>: the PHY rates the other end of the link transmits at, counted over a 200 ms sniffer
 window, at most once a second (11b, 11g and 11n decoded to kbit/s). Since 0.19 every rate carries a timing bound
-from consecutive frames, which proves an LR rate of 500 kbit/s when it reaches 300 kbit/s (LR has only 250 and 500).</p>
+from consecutive frames, which proves an LR rate of 500 kbit/s when it reaches 300 kbit/s (LR has only 250 and 500).
+Since 0.20 a page ends with how many of those frames were retransmissions (the Retry bit): the share of the other end's
+retransmissions.</p>
+
+<h3><code>ID_WIFI_RF</code> = 0x5A (0.20)</h3>
+<p>The radio switched off, to swap an antenna while the module runs. <code>SETTING v0 {KEY, U1 on, U2 seconds}</code>:
+on = 0 stops the whole radio for that many seconds (0 = until an &quot;on&quot; request or a reboot), on = 1 starts it
+again; nothing is saved. A request that came over the network must carry a timer of 1–600 s (ERR_PAYLOAD otherwise):
+the module is reached through that very radio. The answer leaves before the radio stops. <code>CONTENT v0 {U1 on, U2
+seconds left}</code> answers GETTING and SETTING. While off: <code>ID_WIFI</code> v0 IDLE with flag bit3, the LED lit
+steadily, and scans, joins, sweeps and access point changes refused with ERR_RUNTIME.</p>
 
 <h3><code>ID_WIFI_NET</code> = 0x58 (every SETTING starts with the key)</h3>
 <table>
@@ -362,6 +372,8 @@ from consecutive frames, which proves an LR rate of 500 kbit/s when it reaches 3
   <tr><td>AP name &quot;Boat-1&quot;, WPA2, channel 6, 4 clients, password kept: SETTING ID_WIFI_NET v1</td><td><code class="frame">BB 55 57 8A 58 10 4A 5D 6B C9 06 00 04 01 06 42 6F 61 74 2D 31 00 19 1B</code></td></tr>
   <tr><td>Role access point, reboot now: SETTING ID_WIFI_NET v0</td><td><code class="frame">BB 55 57 82 58 06 4A 5D 6B C9 01 01 14 79</code><br><span class="n">after the reboot the module answers its saved address, here 87 (saved with ID_WIFI v5 above); with nothing saved, or with flags 0x03 (forget lines and address), the access point default 88</span></td></tr>
   <tr><td>Periodic report from the module: CONTENT ID_WIFI v1 (23 bytes)</td><td><code class="frame">BB 55 57 09 57 17 03 CC DB 16 00 00 62 07 00 00 E0 FD 1C 00 40 EF 07 00 10 0E 00 00 01 45 0E</code><br><span class="n">CONNECTED, RSSI -52 dBm, 5851/1890 B/s, totals, uptime 3600 s, last reset: power-on</span></td></tr>
+  <tr><td>Radio off for 60 s (antenna swap): SETTING ID_WIFI_RF v0 {KEY, 0, U2 60}</td><td><code class="frame">BB 55 57 82 5A 07 4A 5D 6B C9 00 3C 00 51 1A</code><br><span class="n">answer: OK, then CONTENT v0 {0, U2 60}; the radio stops 200 ms later and comes back by itself</span></td></tr>
+  <tr><td>Radio on now: SETTING ID_WIFI_RF v0 {KEY, 1, 0}</td><td><code class="frame">BB 55 57 82 5A 07 4A 5D 6B C9 01 00 00 16 A5</code></td></tr>
   <tr><td>Update, step 1: SETTING ID_BOOT v0 {KEY}</td><td><code class="frame">BB 55 57 82 24 04 4A 5D 6B C9 DC 10</code><br><span class="n">opens the 5 s update window</span></td></tr>
   <tr><td>Update, step 2: SETTING ID_UPDATE v0 {U2 1, 4 data bytes}</td><td><code class="frame">BB 55 57 82 25 06 01 00 E9 05 02 2F 24 36</code><br><span class="n">chunks up to 253 data bytes, numbered from 1; the first bytes of an ESP-IDF image are E9 ..</span></td></tr>
   <tr><td>Update, step 3: SETTING ID_BOOT v1 {KEY}</td><td><code class="frame">BB 55 57 8A 24 04 4A 5D 6B C9 E4 48</code><br><span class="n">checks the image, answers OK and reboots</span></td></tr>

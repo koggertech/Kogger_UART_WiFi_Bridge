@@ -15,6 +15,9 @@
 #include "link.h"
 #include "portinfo.h"
 #include "relay.h"
+#if CONFIG_WB_LINE1_XLAT
+#include "private/linexlat.h" /* line 1 input translated before the relay (not in the public tree) */
+#endif
 
 static const char *TAG = "uline";
 
@@ -44,6 +47,12 @@ bool uline_running(void)
 
 static bool tx_put(const uint8_t *d, size_t n, size_t reserve)
 {
+#if CONFIG_WB_LINE1_XLAT
+    if (s_run && n) {
+        s_st.tx_drops++; /* a listen-only line: nothing is ever sent on it */
+        return false;
+    }
+#endif
     if (!s_run || n == 0)
         return s_run;
     xSemaphoreTake(s_mux, portMAX_DELAY);
@@ -76,6 +85,9 @@ bool uline_tx_relay(const uint8_t *d, size_t n)
 
 bool uline_set_baud(uint32_t baud)
 {
+#if CONFIG_WB_LINE1_XLAT
+    return false; /* the translated line has the rate of its source */
+#endif
     if (!s_run || baud < LINK_BAUD_MIN || baud > LINK_BAUD_MAX)
         return false;
     xSemaphoreTake(s_mux, portMAX_DELAY);
@@ -132,6 +144,9 @@ static void rx_task(void *arg)
     uart_event_t ev;
     for (;;) {
         if (xQueueReceive(s_evq, &ev, LINE_TICKS(LONG_IDLE_MS)) != pdTRUE) {
+#if CONFIG_WB_LINE1_XLAT
+            linexlat_idle(esp_timer_get_time()); /* long silence only: a UART timeout can come inside a frame */
+#endif
             relay_line_idle(1, true);
             continue;
         }
@@ -140,7 +155,11 @@ static void rx_task(void *arg)
             while ((n = uart_read_bytes(UNUM, buf, sizeof buf, 0)) > 0) {
                 s_st.rx_bytes += (uint32_t)n;
                 portinfo_rx_bytes(1, (size_t)n);
+#if CONFIG_WB_LINE1_XLAT
+                linexlat_bytes(buf, (size_t)n, esp_timer_get_time());
+#else
                 relay_line_bytes(1, buf, (size_t)n);
+#endif
             }
             if (ev.timeout_flag)
                 relay_line_idle(1, false);
@@ -160,8 +179,14 @@ bool uline_start(const line_cfg_t *c)
         ESP_LOGI(TAG, "line 1 pins not configured: UART1 stays off");
         return false;
     }
+    uint32_t baud = c->baud;
+    int tx_pin = c->tx_pin;
+#if CONFIG_WB_LINE1_XLAT
+    baud = LINEXLAT_BAUD;
+    tx_pin = UART_PIN_NO_CHANGE; /* a tap never drives the wire it listens to */
+#endif
     const uart_config_t cfg = {
-        .baud_rate = (int)c->baud,
+        .baud_rate = (int)baud,
         .data_bits = UART_DATA_8_BITS,
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
@@ -172,7 +197,7 @@ bool uline_start(const line_cfg_t *c)
     s_mux = xSemaphoreCreateMutex();
     if (!s_ring || !s_mux || uart_driver_install(UNUM, RX_RING, DRV_TX_RING, 32, &s_evq, 0) != ESP_OK ||
         uart_param_config(UNUM, &cfg) != ESP_OK ||
-        uart_set_pin(UNUM, c->tx_pin, c->rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
+        uart_set_pin(UNUM, tx_pin, c->rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) {
         ESP_LOGE(TAG, "UART1 on TX %d / RX %d failed", c->tx_pin, c->rx_pin);
         return false;
     }
@@ -182,14 +207,18 @@ bool uline_start(const line_cfg_t *c)
      * the ISR, less than a Wi-Fi interrupt can take (no measurement; the counter is rx_overflows). */
     uart_set_rx_full_threshold(UNUM, 64);
     gpio_pullup_en(c->rx_pin);
-    s_tx_pin = c->tx_pin;
+    s_tx_pin = (int8_t)tx_pin;
     s_rx_pin = c->rx_pin;
-    s_baud = c->baud;
+    s_baud = baud;
     s_switched_us = esp_timer_get_time();
     s_run = true;
     xTaskCreate(tx_task, "uline_tx", 2560, NULL, 11, &s_tx);
     xTaskCreate(rx_task, "uline_rx", 3584, NULL, 12, NULL);
+#if CONFIG_WB_LINE1_XLAT
+    ESP_LOGI(TAG, "line 1: UART1 RX %d @ %lu, listen-only, translated", c->rx_pin, (unsigned long)baud);
+#else
     ESP_LOGI(TAG, "line 1: UART1 TX %d RX %d @ %lu", c->tx_pin, c->rx_pin, (unsigned long)c->baud);
+#endif
     return true;
 }
 

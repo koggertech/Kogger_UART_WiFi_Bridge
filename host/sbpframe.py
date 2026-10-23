@@ -14,6 +14,7 @@ RESP = {1: 'OK', 2: 'ERR_CHECK', 3: 'ERR_PAYLOAD', 4: 'ERR_ID', 5: 'ERR_VERSION'
 ID_UART, ID_VERSION, ID_MARK, ID_FLASH, ID_BOOT, ID_WIFI = 0x18, 0x20, 0x21, 0x23, 0x24, 0x57
 ID_WIFI_NET = 0x58
 ID_WIFI_SURVEY = 0x59
+ID_WIFI_RF = 0x5A          # radio off and back on (0.20)
 BOARD_WIFI = 87      # board number of the module in ID_VERSION
 BOARD_WIFI = 87
 
@@ -124,7 +125,7 @@ def parse_status(p):
     if len(p) < 39 or len(p) < 39 + p[38]:
         raise ValueError('bad v0 length %d' % len(p))
     return dict(state=STATES[p[0]] if p[0] < len(STATES) else p[0], auto=bool(p[1] & 1), scanning=bool(p[1] & 2),
-                saved=bool(p[1] & 4), rssi=struct.unpack('b', p[2:3])[0], ch=p[3], auth=_auth(p[4]),
+                saved=bool(p[1] & 4), rf_off=bool(p[1] & 8), rssi=struct.unpack('b', p[2:3])[0], ch=p[3], auth=_auth(p[4]),
                 reason=p[5], why=WHYS[p[6]] if p[6] < len(WHYS) else p[6], clients=p[7],
                 bssid=':'.join('%02x' % x for x in p[8:14]),
                 ip=_ip(p[14:18]), mask=_ip(p[18:22]), gw=_ip(p[22:26]), dns=_ip(p[26:30]),
@@ -339,6 +340,22 @@ def survey_payload(dwell_ms=0, channels=0):
 SURVEY_FLAGS = ['home', 'ap_ok', 'noise_bad']
 
 
+RF_NET_MAX_S = 600   # the longest switch-off a peer may ask for over the network (it must come back by itself)
+
+
+def rf_payload(on, secs=0):
+    """ID_WIFI_RF SETTING v0 (0.20): switch the radio back on, or off for `secs` seconds (0 = until an "on" request
+    or a reboot: only over a wire; over the network 1..RF_NET_MAX_S)."""
+    return KEY + struct.pack('<BH', 1 if on else 0, 0 if on else secs)
+
+
+def parse_rf(p):
+    """ID_WIFI_RF CONTENT v0: on = the radio runs, left = seconds until its timer switches it back on (0 = none)."""
+    if len(p) < 3:
+        raise ValueError('bad ID_WIFI_RF length %d' % len(p))
+    return dict(on=bool(p[0]), left=struct.unpack('<H', p[1:3])[0])
+
+
 LINKRATE_WINDOW_DEF = 200
 LINKRATE_KINDS = {0: 'other', 1: '11b', 2: '11g', 3: 'ht', 4: 'lr'}
 
@@ -354,7 +371,8 @@ def parse_linkrate(p):
     kbps 0 = not known: an LR link (ESP-IDF documents no LR encoding in the received-frame fields) or a code the
     802.11 tables do not hold; the raw kind and code are still given.
     0.19: bound_kbps per rate = the largest timing bound of the window (consecutive frames of that rate, length x 8 /
-    time between them; 0 = no pair timed); an LR rate bounded at 300 or more is reported as 500 with by_timing."""
+    time between them; 0 = no pair timed); an LR rate bounded at 300 or more is reported as 500 with by_timing.
+    0.20: retries = the peer's frames with the Retry bit (retransmissions); retry_share = retries / frames."""
     if len(p) == 2:
         return dict(index=p[0], total=p[1])
     if len(p) < 16 or len(p) < 16 + 9 * p[14]:
@@ -371,8 +389,13 @@ def parse_linkrate(p):
         if bounds:
             r['bound_kbps'] = struct.unpack('<I', p[16 + 9 * n_rates + 4 * i:20 + 9 * n_rates + 4 * i])[0]
         rates.append(r)
-    return dict(index=p[0], total=p[1], peer=':'.join('%02x' % x for x in p[2:8]), window_ms=window, frames=frames,
-                rssi=struct.unpack('b', p[12:13])[0], phy=PHY_MODES.get(p[13], p[13]), rates=rates)
+    d = dict(index=p[0], total=p[1], peer=':'.join('%02x' % x for x in p[2:8]), window_ms=window, frames=frames,
+             rssi=struct.unpack('b', p[12:13])[0], phy=PHY_MODES.get(p[13], p[13]), rates=rates)
+    tail = 16 + 13 * n_rates
+    if len(p) >= tail + 2:
+        d['retries'] = struct.unpack('<H', p[tail:tail + 2])[0]
+        d['retry_share'] = d['retries'] / float(frames) if frames else None
+    return d
 
 
 def parse_survey(p):

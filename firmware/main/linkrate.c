@@ -26,6 +26,7 @@ typedef struct {
     uint8_t  mac[6];
     bool     lr;
     uint32_t frames;
+    uint32_t retries;  /* frames with the Retry bit */
     int32_t  rssi_sum;
     uint8_t  nrates;
     rate_t   rates[LINKRATE_RATES_MAX];
@@ -110,7 +111,7 @@ static void timed(peer_t *p, int idx, uint32_t ts, uint16_t len)
 }
 
 void linkrate_frame(const uint8_t *addr2, int8_t rssi, uint8_t sig_mode, uint8_t rate, uint8_t mcs, bool cwb,
-                    bool sgi, uint32_t ts_us, uint16_t len, bool aggregated)
+                    bool sgi, uint32_t ts_us, uint16_t len, bool aggregated, bool retry)
 {
     peer_t *p = NULL;
     for (int i = 0; i < s_n && !p; i++)
@@ -121,6 +122,8 @@ void linkrate_frame(const uint8_t *addr2, int8_t rssi, uint8_t sig_mode, uint8_t
     uint8_t kind, code, flags;
     linkrate_classify(sig_mode, rate, mcs, cwb, sgi, p->lr, &kind, &code, &flags);
     p->frames++;
+    if (retry)
+        p->retries++;
     p->rssi_sum += rssi;
     int idx = -1;
     for (int i = 0; i < p->nrates && idx < 0; i++) {
@@ -200,5 +203,7 @@ int linkrate_page(int index, uint8_t *out)
         put16(e + 7, r->frames);
         put32(out + LINKRATE_PAGE_HEAD + top * LINKRATE_ENTRY + i * LINKRATE_BOUND, r->bound);
     }
-    return LINKRATE_PAGE_HEAD + top * (LINKRATE_ENTRY + LINKRATE_BOUND);
+    int len = LINKRATE_PAGE_HEAD + top * (LINKRATE_ENTRY + LINKRATE_BOUND);
+    put16(out + len, p->retries > 0xFFFF ? 0xFFFF : (uint16_t)p->retries);
+    return len + LINKRATE_TAIL;
 }

@@ -53,8 +53,8 @@ Fields are separated by spaces.
 |---|---|---|
 | `VER` | — | `OK fw=0.11.0 proto=1 mac=aa:bb:.. idf=v5.x reset=<reason> baud=<rate> part=ota_0\|ota_1 ota=valid\|pending\|…` |
 | `STATUS` | — | `OK` + state fields (below) |
-| `SCAN` | — | `NET ssid= bssid= rssi= ch= auth= known=0\|1` for each network, then `OK count=N`; 2–4 s. `ERR BUSY` while connecting and in the AP role |
-| `CONNECT` | `ssid=` (1–32 bytes), `pass=` (0–64), `save=0\|1` (default 1) | `OK` at once, then `* STATE` events. The network is saved only after an IP address is obtained |
+| `SCAN` | — | `NET ssid= bssid= rssi= ch= auth= known=0\|1` for each network, then `OK count=N`; 2–4 s. `ERR BUSY` while connecting and in the AP role; `ERR BUSY radio off` while the radio is switched off over SBP (0.20) |
+| `CONNECT` | `ssid=` (1–32 bytes), `pass=` (0–64), `save=0\|1` (default 1) | `OK` at once, then `* STATE` events. The network is saved only after an IP address is obtained. `ERR BUSY radio off` while the radio is switched off over SBP (`ID_WIFI_RF`, 0.20) |
 | `DISCONNECT` | — | `OK`; auto‑connect is off until `CONNECT` or `AUTO` |
 | `AUTO` | — | `OK`; look for saved networks again |
 | `LIST` | — | `KNOWN ssid=` for each saved network, `OK count=N` (passwords are never sent) |

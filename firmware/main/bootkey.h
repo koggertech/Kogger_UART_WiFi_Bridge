@@ -31,7 +31,7 @@ typedef struct {
 } bootkey_t;
 
 typedef enum {
-    BOOTKEY_LED_OFF,     /**< nothing armed: the LED is left alone */
+    BOOTKEY_LED_OFF,     /**< nothing armed: the LED shows the link (led.h) */
     BOOTKEY_LED_ON,      /**< armed, blink phase on */
     BOOTKEY_LED_DARK,    /**< armed, blink phase off */
     BOOTKEY_RESET_RATES, /**< released with the rate reset armed */

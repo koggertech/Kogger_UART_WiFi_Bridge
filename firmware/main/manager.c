@@ -30,6 +30,7 @@
 #include "proto.h"
 #include "radio.h"
 #include "relay.h"
+#include "rfoff.h"
 #include "sbp.h"
 #include "sbpdev.h"
 #include "linkrate.h"
@@ -64,7 +65,7 @@ typedef struct {
 
 typedef enum {
     M_LINE, M_SBP, M_SCAN_DONE, M_DISCONNECTED, M_GOT_IP, M_TIMER, M_REPORT, M_OTA_TICK,
-    M_AP_START, M_AP_STOP, M_AP_CLIENT, M_LINKRATE
+    M_AP_START, M_AP_STOP, M_AP_CLIENT, M_LINKRATE, M_RF_ON
 } msg_type_t;
 
 enum { CL_LEFT, CL_JOINED, CL_ADDRESS }; /* M_AP_CLIENT arg */
@@ -125,6 +126,15 @@ static struct {
     int64_t     deadline;
 } SV;
 
+/* ---- radio switched off on request (rfoff.h, docs/SBP_WIFI.md 4b) --------------------------------------- */
+
+#define RF_RETRY_S 5          /* a start the driver refused is tried again after this */
+
+static struct {
+    bool        off;          /* stopped on request: only rf_on() starts it again, or a reboot */
+    int64_t     on_at;        /* when the timer switches it back on, 0 = no timer */
+} RF;
+
 static QueueHandle_t s_q;
 static volatile uint32_t s_req_drops; /* requests dropped for a full queue: ID_WIFI v1 (room_for_request) */
 static esp_netif_t *s_net;            /* station or access point interface */
@@ -132,6 +142,8 @@ static bool s_ap;                     /* running as access point (the role is fi
 static esp_timer_handle_t s_timer;    /* search retry */
 static esp_timer_handle_t s_report;   /* ID_WIFI v1 report */
 static esp_timer_handle_t s_otatick; /* update window/timeouts/self-confirmation */
+static esp_timer_handle_t s_rf_timer; /* switches a radio that was switched off back on */
+static volatile bool s_linked;        /* the status LED's link (manager_linked), read by the LED's timer */
 
 /* ---- text output ------------------------------------------------------------ */
 
@@ -326,7 +338,8 @@ static void sbp_send_status(bool notify)
     uint8_t p[WIFI_V0_FIXED + 32];
     size_t sl = strlen(s.ssid);
     p[0] = (uint8_t)S.st;
-    p[1] = (uint8_t)((S.autoc ? 1 : 0) | (S.scanning ? 2 : 0) | (s.ssid[0] && known_find(s.ssid) >= 0 ? 4 : 0));
+    p[1] = (uint8_t)((S.autoc ? 1 : 0) | (S.scanning ? 2 : 0) | (s.ssid[0] && known_find(s.ssid) >= 0 ? 4 : 0) |
+                     (RF.off ? 8 : 0));
     p[2] = (uint8_t)(int8_t)s.rssi;
     p[3] = (uint8_t)s.ch;
     p[4] = s.auth;
@@ -410,12 +423,35 @@ void manager_report_restart(void)
     report_restart();
 }
 
+/* The status LED's link: a station joined with an address, an access point with a station joined. Again on every
+ * state, every client event and every 500 ms tick (a client may leave without an event reaching here). */
+static void link_update(void)
+{
+    bool l = S.st == ST_CONNECTED;
+    if (S.st == ST_AP) {
+        wifi_sta_list_t list;
+        l = esp_wifi_ap_get_sta_list(&list) == ESP_OK && list.num > 0;
+    }
+    s_linked = l;
+}
+
+bool manager_linked(void)
+{
+    return s_linked;
+}
+
+bool manager_rf_off(void)
+{
+    return RF.off;
+}
+
 static void set_state(state_t st)
 {
     S.st = st;
     S.since = esp_timer_get_time();
     S.ap_lost = 0;
     relay_wifi(st == ST_CONNECTED || st == ST_AP);
+    link_update();
     char f[380];
     status_fields(f, sizeof f);
     ctl_send("* STATE %s", f);
@@ -608,7 +644,7 @@ static void start_connect(const char *ssid, const char *pass)
 
 static void go_search(void)
 {
-    if (!S.autoc || S.nknown == 0) {
+    if (!S.autoc || S.nknown == 0 || RF.off) { /* switched off: AUTO only takes effect when it is back on */
         set_state(ST_IDLE);
         return;
     }
@@ -675,6 +711,8 @@ static void act_forget_all(void)
  * (an access point restarts). */
 static void radio_reassociate(void)
 {
+    if (RF.off)
+        return; /* the radio starts with them when it is switched back on */
     if (s_ap) {
         wifiap_restart();
         return;
@@ -703,7 +741,7 @@ static void radio_fields(char *out, size_t cap)
 /* Returns 0 if a scan is running or was started for the requester, -1 if it cannot start now. */
 static int request_scan(void)
 {
-    if (s_ap)
+    if (s_ap || RF.off)
         return -1; /* an access point has no station to scan with */
     if (S.scanning)
         return 0; /* piggyback on the running scan */
@@ -816,7 +854,7 @@ static bool linkrate_busy(void);
 
 static uint8_t survey_begin_radio(uint16_t dwell, uint16_t mask)
 {
-    if (SV.on || S.scanning || S.st == ST_CONNECTING || linkrate_busy())
+    if (SV.on || S.scanning || S.st == ST_CONNECTING || linkrate_busy() || RF.off)
         return SBP_RESP_ERR_RUNTIME;
     dwell = survey_clamp_dwell(dwell);
     mask = survey_clamp_mask(mask);
@@ -1178,6 +1216,7 @@ static void on_ap_client(int ev, const uint8_t *mac, uint32_t ip)
     esp_ip4_addr_t a = { .addr = ip };
     ctl_send("* AP_CLIENT event=%s mac=" MACSTR " ip=" IPSTR, EV[ev], MAC2STR(mac), IP2STR(&a));
     ESP_LOGI(TAG, "client %s " MACSTR " " IPSTR, EV[ev], MAC2STR(mac), IP2STR(&a));
+    link_update();
     if (sbpdev_has_listener())
         sbp_send_status(true); /* the client count is in it */
 }
@@ -1237,8 +1276,8 @@ static void sbp_wifi(const sbp_frame_t *f)
             sbp_send_status(false);
             break;
         }
-        if (s_ap) {
-            sbpdev_ack(f, SBP_RESP_ERR_RUNTIME); /* no station in the access point role */
+        if (s_ap || RF.off) {
+            sbpdev_ack(f, SBP_RESP_ERR_RUNTIME); /* no station in the access point role, no radio to join with */
             break;
         }
         char ssid[33], pass[65];
@@ -1386,7 +1425,8 @@ static struct {
 
 static esp_timer_handle_t s_lrw_timer;
 
-/* Promiscuous callback, Wi-Fi task: a data frame received without error, counted when a peer sent it. */
+/* Promiscuous callback, Wi-Fi task: a data frame received without error, counted when a peer sent it. Byte 1 of the
+ * frame control field holds the Retry bit (0x08). */
 static void linkrate_rx(void *buf, wifi_promiscuous_pkt_type_t type)
 {
     const wifi_promiscuous_pkt_t *p = buf;
@@ -1394,7 +1434,8 @@ static void linkrate_rx(void *buf, wifi_promiscuous_pkt_type_t type)
     if (type != WIFI_PKT_DATA || r->rx_state != 0 || r->sig_len < 16)
         return;
     linkrate_frame(p->payload + 10, (int8_t)r->rssi, (uint8_t)r->sig_mode, (uint8_t)r->rate, (uint8_t)r->mcs,
-                   r->cwb, r->sgi, (uint32_t)r->timestamp, (uint16_t)r->sig_len, r->aggregation);
+                   r->cwb, r->sgi, (uint32_t)r->timestamp, (uint16_t)r->sig_len, r->aggregation,
+                   (p->payload[1] & 0x08) != 0);
 }
 
 static void lrw_cb(void *arg)
@@ -1441,7 +1482,7 @@ static void linkrate_end(void)
 static uint8_t linkrate_begin_radio(uint16_t window)
 {
     int64_t now = esp_timer_get_time();
-    if (LRW.on || SV.on || S.scanning || S.st == ST_CONNECTING ||
+    if (LRW.on || SV.on || S.scanning || S.st == ST_CONNECTING || RF.off ||
         (LRW.last_end && now - LRW.last_end < (int64_t)LINKRATE_GAP_MS * 1000))
         return SBP_RESP_ERR_RUNTIME;
     uint8_t peers[LINKRATE_PEERS_MAX][6];
@@ -1538,7 +1579,7 @@ static void sbp_survey(const sbp_frame_t *f)
         sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
         return;
     }
-    if (SV.on || S.scanning || S.st == ST_CONNECTING) {
+    if (SV.on || S.scanning || S.st == ST_CONNECTING || RF.off) {
         sbpdev_ack(f, SBP_RESP_ERR_RUNTIME);
         return;
     }
@@ -1553,6 +1594,125 @@ static void sbp_survey(const sbp_frame_t *f)
     }
 }
 
+/* ---- radio switched off on request (rfoff.h, docs/SBP_WIFI.md 4b) --------------------------------------- */
+
+static void rf_cb(void *arg)
+{
+    msg_t m = { .type = M_RF_ON };
+    post(&m);
+}
+
+/* Something that needs the radio runs: a sweep, a link rate window, a scan somebody waits for, an update (its
+ * transfer, or a fresh image that still has to prove it works). A search scan of a station is simply dropped. */
+static bool rf_busy(void)
+{
+    return SV.on || LRW.on || S.scan_for_user || S.scan_for_sbp || ota_boot_mode() != 0 || ota_pending();
+}
+
+/* The last request decides when the radio comes back: `secs` from now, 0 = only on request or by a reboot. */
+static void rf_schedule(uint16_t secs)
+{
+    esp_timer_stop(s_rf_timer);
+    RF.on_at = 0;
+    int64_t at = esp_timer_get_time() + (int64_t)secs * 1000000; /* read first: the timer fires at or after it */
+    if (secs && esp_timer_start_once(s_rf_timer, (uint64_t)secs * 1000000) == ESP_OK)
+        RF.on_at = at;
+}
+
+static bool rf_stop(void)
+{
+    esp_timer_stop(s_timer); /* no search retry */
+    if (S.scanning) {
+        esp_wifi_scan_stop();
+        S.scanning = false;
+    }
+    drop_connection(); /* its disconnect event is swallowed */
+    esp_err_t e = esp_wifi_stop();
+    if (e != ESP_OK) {
+        ESP_LOGE(TAG, "radio did not stop: %s", esp_err_to_name(e));
+        return false;
+    }
+    if (!s_ap)
+        set_state(ST_IDLE); /* an access point reports IDLE on WIFI_EVENT_AP_STOP */
+    ESP_LOGW(TAG, "radio off on request");
+    return true;
+}
+
+/* Back on: an access point starts as at boot, a station searches for its saved networks again. A start the driver
+ * refuses is tried again every RF_RETRY_S: a switch-off asked for over the network has to end by itself. */
+static bool rf_on(void)
+{
+    rf_schedule(0);
+    if (!RF.off)
+        return true;
+    esp_err_t e = esp_wifi_start();
+    if (e != ESP_OK) {
+        ESP_LOGE(TAG, "radio did not start again: %s", esp_err_to_name(e));
+        rf_schedule(RF_RETRY_S);
+        return false;
+    }
+    RF.off = false;
+    S.expect_disc = false; /* a disconnect asked for before the stop that never came */
+    radio_post_start();
+    if (!s_ap)
+        go_search();
+    ESP_LOGW(TAG, "radio on");
+    return true;
+}
+
+static void sbp_send_rf(bool notify)
+{
+    uint16_t left = 0;
+    if (RF.off && RF.on_at) {
+        int64_t s = (RF.on_at - esp_timer_get_time() + 999999) / 1000000;
+        left = (uint16_t)(s < 1 ? 1 : s > 0xFFFF ? 0xFFFF : s); /* 1 until the timer's message is handled */
+    }
+    uint8_t q[RFOFF_STATE_LEN];
+    rfoff_state(q, !RF.off, left);
+    (notify ? sbpdev_notify : sbpdev_send)(SBP_T_CONTENT, 0, SBP_ID_WIFI_RF, q, sizeof q);
+}
+
+/* ID_WIFI_RF 0x5A: SETTING v0 {KEY, U1 on, U2 seconds} switches the radio off or back on, GETTING v0 reads it.
+ * A SETTING is acknowledged, then both answer CONTENT v0 {U1 on, U2 seconds left}. Switching off from the network
+ * needs a timer (rfoff_parse): the module would be cut off from that peer for good. */
+static void sbp_rf(const sbp_frame_t *f)
+{
+    if (sbp_ver(f->mode) != 0) {
+        sbpdev_ack(f, SBP_RESP_ERR_VERSION);
+        return;
+    }
+    if (sbp_type(f->mode) != SBP_T_SETTING) {
+        sbp_send_rf(false);
+        return;
+    }
+    sbp_chan_t here;
+    sbpdev_channel(&here);
+    rfoff_req_t r = { 0 };
+    uint8_t code = rfoff_parse(f->payload, f->len, here.kind == CH_NET, &r);
+    if (code == SBP_RESP_OK && r.on)
+        code = rf_on() ? SBP_RESP_OK : SBP_RESP_ERR_RUNTIME;
+    else if (code == SBP_RESP_OK && !RF.off && rf_busy())
+        code = SBP_RESP_ERR_RUNTIME;
+    sbpdev_ack(f, code);
+    if (code != SBP_RESP_OK || r.on) {
+        sbp_send_rf(false);
+        return;
+    }
+    bool was_off = RF.off;
+    rf_schedule(r.secs);
+    RF.off = true;
+    sbp_send_rf(false);
+    if (was_off)
+        return;
+    vTaskDelay(pdMS_TO_TICKS(200)); /* the answer leaves before the radio stops: it may go over that radio */
+    if (!rf_stop()) { /* still on: the answer said off, so tell whoever listens */
+        rf_schedule(0);
+        RF.off = false;
+        if (sbpdev_has_listener())
+            sbp_send_rf(true);
+    }
+}
+
 static void handle_sbp(const sbp_frame_t *f)
 {
     if (sbpdev_handle(f) == 0)
@@ -1563,6 +1723,8 @@ static void handle_sbp(const sbp_frame_t *f)
         sbp_survey(f);
     else if (f->id == SBP_ID_WIFI_NET)
         netctl_handle(f);
+    else if (f->id == SBP_ID_WIFI_RF)
+        sbp_rf(f);
     /* other ids: not ours, ignored like the sonars do */
 }
 
@@ -1629,6 +1791,8 @@ static void handle_line(char *line)
     } else if (!strcmp(c, "SCAN")) {
         if (S.scan_for_user) {
             ctl_send("%s ERR BUSY scan already requested", tag);
+        } else if (RF.off) {
+            ctl_send("%s ERR BUSY radio off", tag);
         } else if (request_scan() != 0) {
             ctl_send("%s ERR BUSY connecting or scan did not start", tag);
         } else {
@@ -1643,6 +1807,10 @@ static void handle_line(char *line)
             !arg_dec(&l, "pass", pass, sizeof pass, false) ||
             !arg_dec(&l, "save", save, sizeof save, false)) {
             ctl_send("%s ERR BAD_ARGS need ssid=<1..32 bytes> [pass=<0..64 bytes>] [save=0|1]", tag);
+            return;
+        }
+        if (RF.off) {
+            ctl_send("%s ERR BUSY radio off", tag);
             return;
         }
         ctl_send("%s OK", tag);
@@ -1809,8 +1977,13 @@ static void manager_task(void *arg)
             ota_tick();
             survey_tick();
             supervise();
+            link_update();
             break;
         case M_LINKRATE:     linkrate_end(); break;
+        case M_RF_ON: /* the timer's message: not when a later request moved or dropped the timer */
+            if (RF.off && RF.on_at && esp_timer_get_time() >= RF.on_at && rf_on() && sbpdev_has_listener())
+                sbp_send_rf(true);
+            break;
         case M_SCAN_DONE:    on_scan_done(m.arg); break;
         case M_DISCONNECTED: on_disconnected(m.arg, m.ssid); break;
         case M_GOT_IP:       on_got_ip(); break;
@@ -1846,6 +2019,8 @@ void manager_init(esp_netif_t *net)
     ESP_ERROR_CHECK(esp_timer_create(&to, &s_otatick));
     const esp_timer_create_args_t tl = { .callback = lrw_cb, .name = "linkrate" };
     ESP_ERROR_CHECK(esp_timer_create(&tl, &s_lrw_timer));
+    const esp_timer_create_args_t tf = { .callback = rf_cb, .name = "rf_on" };
+    ESP_ERROR_CHECK(esp_timer_create(&tf, &s_rf_timer));
     /* Registered before esp_wifi_start(): WIFI_EVENT_AP_START follows it at once. Events wait in the
      * queue until the task runs. */
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_evt, NULL));

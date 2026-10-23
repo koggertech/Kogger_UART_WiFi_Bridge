@@ -21,6 +21,7 @@
 
 #include "bootkey.h"
 #include "bridge.h"
+#include "led.h"
 #include "link.h"
 #include "manager.h"
 #include "netcfg.h"
@@ -72,33 +73,35 @@ static uint32_t reset_request(void)
     return ok ? r : 0;
 }
 
+/* Also the status LED (led.h): the link, unless a reset is armed. X2's pins are set at boot (uline_start) before
+ * the first poll, so whether the pin is ours is decided once. */
 static void bootkey_poll(void *arg)
 {
     static bootkey_t k;
+    static led_t ls;
     static int led = -1;  /* -1 not decided yet, 0 X2 uses the pin, 1 ours */
     static uint8_t told;  /* level already logged */
     (void)arg;
+    bootkey_act_t a = BOOTKEY_LED_OFF;
     if (ota_pending()) {
         k = (bootkey_t){0};
-        return;
+    } else {
+        a = bootkey_step(&k, gpio_get_level(BOOTKEY_GPIO) == 0);
+        if (a == BOOTKEY_RESET_RATES || a == BOOTKEY_RESET_ALL) {
+            s_reset_req[0] = RESET_MAGIC + (uint32_t)a;
+            s_reset_req[1] = ~s_reset_req[0];
+            ESP_LOGW("main", "BOOT released: restarting to reset %s",
+                     a == BOOTKEY_RESET_ALL ? "every setting" : "the port rates");
+            esp_restart();
+        }
+        if (k.level != told) {
+            told = k.level;
+            if (told != BOOTKEY_NONE)
+                ESP_LOGW("main", "BOOT held %d s: %s on release",
+                         (told == BOOTKEY_ALL ? BOOTKEY_ALL_MS : BOOTKEY_RATES_MS) / 1000,
+                         told == BOOTKEY_ALL ? "every setting is reset" : "the port rates are reset");
+        }
     }
-    bootkey_act_t a = bootkey_step(&k, gpio_get_level(BOOTKEY_GPIO) == 0);
-    if (a == BOOTKEY_RESET_RATES || a == BOOTKEY_RESET_ALL) {
-        s_reset_req[0] = RESET_MAGIC + (uint32_t)a;
-        s_reset_req[1] = ~s_reset_req[0];
-        ESP_LOGW("main", "BOOT released: restarting to reset %s",
-                 a == BOOTKEY_RESET_ALL ? "every setting" : "the port rates");
-        esp_restart();
-    }
-    if (k.level != told) {
-        told = k.level;
-        if (told != BOOTKEY_NONE)
-            ESP_LOGW("main", "BOOT held %d s: %s on release",
-                     (told == BOOTKEY_ALL ? BOOTKEY_ALL_MS : BOOTKEY_RATES_MS) / 1000,
-                     told == BOOTKEY_ALL ? "every setting is reset" : "the port rates are reset");
-    }
-    if (a == BOOTKEY_LED_OFF)
-        return;
     if (led < 0) {
         int8_t tx, rx;
         uline_pins(&tx, &rx);
@@ -107,8 +110,11 @@ static void bootkey_poll(void *arg)
         if (led && gpio_config(&io) != ESP_OK)
             led = 0;
     }
-    if (led)
-        gpio_set_level(LED_GPIO, a == BOOTKEY_LED_ON);
+    if (!led)
+        return;
+    bool lit = a == BOOTKEY_LED_OFF ? led_step(&ls, manager_linked(), (uint32_t)(esp_timer_get_time() / 1000))
+                                    : a == BOOTKEY_LED_ON;
+    gpio_set_level(LED_GPIO, lit);
 }
 
 static void bootkey_start(void)

@@ -152,6 +152,8 @@ releases to this layout.
 | Relay: TCP packet not accepted → break | 5 s | `relay.c` `TCP_SEND_US` |
 | IP bridge DNS relay timeout | 5 s | `bridge.c` `DNS_TIMEOUT_MS` |
 | Text `REBOOT` delay | 0.3 s | `manager.c` |
+| Radio switched off (`ID_WIFI_RF`): stop after the answer / longest timer asked over the network / a refused start tried again | 0.2 s / 600 s / every 5 s | `manager.c`, `rfoff.h` `RFOFF_NET_MAX_S`, `manager.c` `RF_RETRY_S` |
+| Status LED with a link: flash / dark | 100 ms / 2000 ms (polled every 50 ms) | `led.h` `LED_FLASH_MS`, `LED_PAUSE_MS` |
 | Task watchdog | 5 s, panic | ESP‑IDF default + `CONFIG_ESP_TASK_WDT_PANIC` |
 
 ## 5. Buffers and limits

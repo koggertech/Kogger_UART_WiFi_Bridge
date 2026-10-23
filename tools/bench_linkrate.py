@@ -77,6 +77,9 @@ def show(pages):
             continue
         print('  peer %s: %d frames in %d ms, RSSI %d dBm, negotiated %s' % (p['peer'], p['frames'], p['window_ms'],
                                                                             p['rssi'], p['phy']))
+        if 'retries' in p:
+            print('    retransmitted (Retry bit): %d of %d frames%s' % (p['retries'], p['frames'],
+                  ' = %.1f %%' % (100.0 * p['retry_share']) if p['retry_share'] is not None else ''))
         for r in p['rates']:
             what = ('%.1f Mbit/s' % (r['kbps'] / 1000.0)) if r['kbps'] else 'rate not known'
             if r.get('by_timing'):
@@ -142,6 +145,16 @@ def main():
               '%d pages, %s clients' % (len(peers), status.get('clients')))
     heard = [p for p in peers if p['frames']]
     check('frames were heard from the peer (there is traffic on the link)', heard, 'none')
+    if fw >= (0, 20):
+        every = [p for p in pages + more if 'peer' in p]
+        check('every page carries the retransmission count (0.20), never above the frames',
+              every and all('retries' in p and p['retries'] <= p['frames'] for p in every),
+              str([(p.get('retries'), p['frames']) for p in every]))
+        total_f = sum(p['frames'] for p in every)
+        total_r = sum(p.get('retries', 0) for p in every)
+        if total_f:
+            print('  over %d window(s): %d of %d frames retransmitted = %.1f %%' % (a.windows, total_r, total_f,
+                                                                                    100.0 * total_r / total_f))
     all_rates = [r for p in pages + more if 'rates' in p for r in p['rates']]
     timed = [r for r in all_rates if r.get('bound_kbps') and r['kbps'] and not r.get('by_timing')]
     if timed:  # the method's control: a timing bound must never exceed a rate the 802.11 tables give
