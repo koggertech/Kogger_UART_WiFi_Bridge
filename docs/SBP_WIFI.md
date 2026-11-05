@@ -1,6 +1,7 @@
 # The module as a Kogger SBP device
 
-Contract version 10 (firmware 0.20.0: `ID_WIFI_RF` 0x5A, the radio switched off to swap an antenna, flag bit3
+Contract version 12 (firmware 0.22.0: `ID_WIFI_PROFILE` 0x5B, a whole module profile, §4c; version 11 = 0.21.0: line 1's input translator, a setting of `ID_WIFI_NET` v3; version 10 =
+0.20.0: `ID_WIFI_RF` 0x5A, the radio switched off to swap an antenna, flag bit3
 of `ID_WIFI` v0, and retransmissions in `ID_WIFI_SURVEY` v1; version 9 = 0.19.0: a timing bound on the rates of `ID_WIFI_SURVEY` v1, which proves LR
 500 kbit/s; version 8 = 0.18.0: `ID_WIFI_SURVEY` v1, the link rate; version 7 = 0.16.0: `ID_WIFI_SURVEY`
 0x59, how busy each channel is; version 6 = 0.15.0:
@@ -221,7 +222,7 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
 | v0 | role: `{U1 at next boot, U1 now}`, 0 station, 1 AP | `{U1 role, U1 flags}`: bit0 reboot right after the answer, bit1 forget lines and own address (the new role starts from its defaults) |
 | v1 | access point: `{U1 channel 1–11, U1 hidden 0/1, U1 max clients 1–10, U1 security 0 open/1 WPA2/2 WPA2+WPA3, U1 len, SSID, U1 0}` | the same, ending with `U1 len, password` (8–63; empty for open). An empty password with security on keeps the old password |
 | v2 | address: `{ip[4], mask[4], U1 DHCP, pool start[4], pool end[4], U2 lease min, U1 offer: bit0 gateway, bit1 DNS}` (20 bytes) | the same 20 bytes |
-| v3 | line (18 bytes): `{U1 line, U1 mode 0 off/1 UDP/2 TCP, U1 dest 0 fixed/1 senders/2 broadcast, ip[4], U2 rport, U2 lport, U4 baud, S1 TX, S1 RX, U1 uart}`. No payload: both lines; `{U1 line}`: one | the first 17 bytes of the record. `baud` (0.12) changes the other line's rate, or either line's when asked from the network, and is saved at once; 0 or the running rate keeps it. For the line of the port the request came through `baud` is ignored: that port's rate is changed with `ID_UART` v0. Pins apply to line 1 only (line 0: the build) |
+| v3 | line (18 bytes, 21 from 0.21): `{U1 line, U1 mode 0 off/1 UDP/2 TCP, U1 dest 0 fixed/1 senders/2 broadcast, ip[4], U2 rport, U2 lport, U4 baud, S1 TX, S1 RX, U1 uart}`, from 0.21 followed by `{U1 translator saved, U1 translator running, U1 translators built}`. No payload: both lines; `{U1 line}`: one | the first 17 bytes of the record; from 0.21 an 18th byte may follow: line 1's input translator. `baud` (0.12) changes the other line's rate, or either line's when asked from the network, and is saved at once; 0 or the running rate keeps it. For the line of the port the request came through `baud` is ignored: that port's rate is changed with `ID_UART` v0. Pins apply to line 1 only (line 0: the build) |
 | v4 | line statistics (57 bytes); no payload: both, `{U1 line}`: one | — (ERR_TYPE) |
 | v5 | AP clients: `{U1 index, U1 total, MAC[6], ip[4], S1 RSSI}` each; none: `{0, 0}` | — (ERR_TYPE) |
 | v6 | own address `{U1}` | `{U1 address 1–254}` (0 and 255 → ERR_PAYLOAD); acknowledged from the old address |
@@ -250,6 +251,13 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
   their running rate (the saved one while the UART does not run); line 0 carries the build's pins (−1/−1 in the USB
   variant). An error in any field → ERR_PAYLOAD and nothing changes. Writing back a record read earlier never moves the
   rate of the port the host sits on, even when the rate has changed since.
+- **v3, line 1's input translator (0.21).** Instead of relaying X2's bytes, the line only listens to its wire (TX never
+  driven, 9600 8N1) and passes on a translation of what it hears into MAVLink. Values: 0 none (default), 1 a telemetry
+  translator for a vendor protocol. Byte 18 is the saved choice, 19 what runs this boot, 20 a mask of the translators
+  the build carries (bit0 = 1). **This repository's build carries none:** the mask is 0, and an 18th byte of 1 is
+  refused with ERR_PAYLOAD. The choice is set by the 18th byte of a SETTING (line 0: only 0), saved at once, runs from
+  the next boot, and is forgotten with the lines. A 17-byte record leaves it alone, so a record read and written back
+  never changes it.
 - **v4.** The payload starts with `{U1 line, U1 state 0 off/1 no Wi‑Fi/2 no peer/3 ready, ip[4], U2 peer port,
   U1 senders}`, then twelve U4 counters:
   - up: frames, bytes, packets, drops;
@@ -473,6 +481,109 @@ Checks: the request and the answer on the PC (`firmware/main/rfoff.c`, `tests/te
 `tools/bench_rf.py` (the module on the port; a module behind a bridge with `--route 88`: the near module watches it
 leave the air and come back without a reboot).
 
+## 4c. `ID_WIFI_PROFILE` = 0x5B - a whole module profile (firmware 0.22)
+
+A profile is every saved setting of the module in one blob. The module takes it in pieces, checks all of it with the
+same rules as the single settings, and if any field is wrong it refuses and **changes nothing**. Otherwise it saves
+every setting, remembers the profile's name and reboots into the new configuration. So a module is never left half
+set up when the link drops part way (a change of network or role drops it by itself). Implementation:
+`firmware/main/profile.c` (the format), `profctl.c` (upload, checks, saving); helpers in `host/sbpframe.py`
+(`profile_blob`, `profile_decode`, `profile_*_payload`); bench tool `tools/profile.py`.
+
+The module still **never gives passwords back**: a profile taken from a module has none; they are typed in, or kept
+in the profile file in plain text.
+
+### The blob (format 1, little-endian)
+
+| Part | Bytes | Rules as in |
+|---|---|---|
+| format | `U1` = 1 | |
+| name | `U1` length 1…32, UTF-8 bytes without NUL | |
+| role | `U1` 0 station, 1 access point | `ID_WIFI_NET` v0 |
+| own address | `U1` 1…254 | `ID_WIFI_NET` v6 |
+| X1 rate | `U4` 9600…5 000 000 | `ID_UART` |
+| radio | `U1` power (0.25 dBm), `U1` protocols, `U1` width, `U1` power save | `ID_WIFI` v7 |
+| access point | `U1` channel, `U1` hidden, `U1` max clients, `U1` security, `U1` length + SSID 1…32, `U1` length + password 0…63 | `ID_WIFI_NET` v1 |
+| address and DHCP | `ip[4]`, `mask[4]`, `U1` DHCP, `pool start[4]`, `pool end[4]`, `U2` lease (min), `U1` offer | `ID_WIFI_NET` v2 |
+| line 0 | `U1` mode, `U1` dest, `ip[4]`, `U2` rport, `U2` lport | `ID_WIFI_NET` v3 |
+| line 1 | the same 10 bytes, `U4` X2 rate, `S1` TX, `S1` RX, `U1` input translator | `ID_WIFI_NET` v3 with byte 18 |
+| station networks | `U1` count 0…8; each `U1` length + SSID 1…32, `U1` length + password 0…64 | see below |
+
+Nothing follows the last network. The longest profile is 977 bytes (limit 1024).
+
+- Line 0's pins and rate field come from the build and the "X1 rate" field; the profile has none.
+- Two UDP lines cannot listen on one port. The input translator must be in the build (`ID_WIFI_NET` v3, byte 20).
+- A power above 20 dBm (81…84) is saved as 20 dBm. With security 0 (an open access point) its password is not saved.
+- **Station networks** are replaced by the profile's list as a whole, in its order (an empty list clears them).
+  Normally a network enters the list only after a successful join; from a profile it enters without one, so each is
+  checked: no two of one name, a password empty (open network), 8…63 characters or 64 hex digits.
+- Not in a profile: the period of the `ID_WIFI` v1 report, and the radio switch-off (`ID_WIFI_RF`, never saved).
+  After the reboot a station searches for its networks if it has any, as at every boot.
+
+### Requests
+
+- **SETTING v1** `{KEY, U2 length, U4 CRC-32}`, exactly 10 bytes - begin an upload; an unfinished earlier one is
+  dropped. CRC-32 is ISO-HDLC (as `zlib.crc32`) of the whole blob. ERR_KEY - no key; ERR_PAYLOAD - length 0 or above 1024.
+- **SETTING v2** `{U2 offset, bytes}` - the next piece, up to 253 bytes (`host/sbpframe.py` sends 200). Pieces go in
+  order: offset = what was received so far; send the next one after the previous one's OK. A piece sent again (its
+  answer was lost) is answered OK if it matches what was received. ERR_RUNTIME - no upload begun; ERR_PAYLOAD - out of
+  order, past the announced length, empty, or a repeat with other bytes.
+- **SETTING v3** `{KEY}` - apply. Checked in order: all of it arrived, the CRC-32 matches, the format and lengths, then
+  every field with the module's rules.
+  - **OK** - the profile is saved. CONTENT v3 `{0}` and CONTENT v0 (the new name, "changed" cleared) follow; 200 ms
+    later the module reboots into the new configuration.
+  - **ERR_PAYLOAD** with CONTENT v3 `{reason}` - refused, nothing saved, the module runs on as it was.
+  - **ERR_RUNTIME** with CONTENT v3 `{16}` - a firmware update runs, or a new image has not confirmed itself yet: a
+    reboot now would roll it back. Try later.
+  - **ERR_RUNTIME without CONTENT v3** - the flash refused a write part way. What was saved stays, no reboot; GETTING v0
+    reports "changed" (*Inference*: not seen on a sound flash, not reproduced).
+  - ERR_KEY - no key.
+- **GETTING v0** -> **CONTENT v0** `{U1 flags, U4 fingerprint, U2 received, U2 announced, U1 length, name}`. Bit 0 - the
+  module was loaded with a profile (the name is its), bit 1 - a setting changed since. The fingerprint is the CRC-32 of
+  the settings as the profile left them. "Received of announced" is an unfinished upload (0 of 0 - none).
+- **GETTING v3** -> **CONTENT v3** `{U1 reason}` of the last refusal (0 - none).
+
+| Reason | Name in `sbpframe.py` | What is wrong |
+|---|---|---|
+| 0 | `ok` | - |
+| 1 | `incomplete` | no upload begun, or not all of it arrived |
+| 2 | `crc` | the CRC-32 of what arrived differs from the announced one |
+| 3 | `format` | another format, a string length out of its range, bytes left over or missing |
+| 4 | `name` | the name is empty, longer than 32 bytes or holds a NUL |
+| 5 | `role` | role above 1 |
+| 6 | `address` | address 0 or 255 |
+| 7 | `x1_baud` | X1 rate outside 9600…5 000 000 |
+| 8 | `radio` | radio |
+| 9 | `ap` | access point |
+| 10 | `ip` | address and DHCP |
+| 11 | `line0` | line 0 |
+| 12 | `line1` | line 1 (its X2 rate and pins too) |
+| 13 | `lines` | both lines UDP on one port |
+| 14 | `xlat` | this build does not carry that input translator |
+| 15 | `nets` | networks: more than 8, lengths, a repeated name, a password |
+| 16 | `busy` | a firmware update (above) |
+
+### "Changed since the profile"
+
+After saving, the module keeps the profile's name and the fingerprint of its saved settings (NVS `prof`) and computes
+the fingerprint again on every GETTING v0. It is taken from the saved values, not from the blob that came, so a power
+of 21 dBm saved as 20, or the password of an open access point, do not read as a change. Any change of a setting the
+profile holds (from an app, the BOOT button's rate reset) sets bit 1; putting the value back clears it. A station
+joining a network does not set it: the order of the list does not change. The full reset with the BOOT button erases
+the profile record too.
+
+### After a load
+
+- The module comes up **with the profile's own address** - it may change; a host finds the module by discovery (§2).
+- **Port X1 runs at the profile's rate.** A host on X1 follows it (a CP2105 adapter goes up to 2 Mbaud: do not load a
+  profile with X1 at 5 Mbaud over such a cable; `tools/profile.py` refuses it).
+- **Role and network are the profile's.** A host on Wi-Fi loses the link when the network changes. A pair of modules
+  (boat and head unit) is changed in order: first the boat over the air, then the head unit over its wire; otherwise
+  they lose each other.
+
+Checks: the format on the PC (`tests/test_all.py`: the same blob in C and in Python, the same refusal for every damaged
+blob); on hardware with `tools/profile.py apply` (load, reboot, then the name, the flag and every setting read back).
+
 ## 5. X1: SBP and the IP bridge
 
 X1 also understands SLIP frames for the IP bridge ([PROTOCOL.md](PROTOCOL.md), daemon `host/espwifi_bridge.py`); X2
@@ -489,9 +600,10 @@ carries SBP only.
 
 ## 6. ID choice
 
-`ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59, `ID_WIFI_RF` 0x5A and board ID 87 were unused in
+`ID_WIFI` 0x57, `ID_WIFI_NET` 0x58, `ID_WIFI_SURVEY` 0x59, `ID_WIFI_RF` 0x5A, `ID_WIFI_PROFILE` 0x5B and board ID 87 were unused in
 KoggerApp when they were chosen. A version byte in SBP holds three bits, v0…v7, and all eight versions of `ID_WIFI` were taken, so the
 survey got an id of its own rather than a ninth version. The first three were unused in KoggerApp when chosen
 (September 2026). 0x57 ("W") sits in the middle of the empty range 0x41–0x63, away from the groups KoggerApp extends
 one by one; 0x58 is its neighbour. 0x5A (October 2026) is the next free code in that range; it is not a free version of
 `ID_WIFI_SURVEY` because it controls the radio, while that id measures it.
+0x5B (November 2026) is the next one; it is not a free version of `ID_WIFI_NET`, which sets one setting per request, while a profile is uploaded in pieces and saved as a whole, with versions v0-v3 of its own.

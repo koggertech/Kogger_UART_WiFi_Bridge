@@ -3,6 +3,36 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.22.0 — 2026‑11‑05
+
+- **Module profiles** (`ID_WIFI_PROFILE` 0x5B, [docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4c): every saved
+  setting of a module - role, own address, port rates, radio, access point, address and DHCP, both lines, the
+  station's networks - as one blob of up to 1024 bytes, uploaded in pieces of up to 253 bytes with a CRC-32. The
+  module checks the whole profile with the rules of the single settings; if any field is wrong it refuses, names the
+  first wrong part and changes nothing. Otherwise it saves every setting at once and reboots into the new
+  configuration, so a link that drops part way (a change of role or network drops it by itself) can no longer leave
+  a module half set up.
+- The module remembers the **profile's name** and reports whether **a setting changed since** (`GETTING v0`): it
+  keeps a fingerprint of its saved settings and compares it on every request.
+- A profile's station networks are saved without joining them, so each is checked (no repeated names; a password
+  empty, 8-63 characters or 64 hex digits). Passwords are still never read back.
+- Python helpers in `host/sbpframe.py`; bench tool `tools/profile.py` (which profile a module carries; load one and
+  read every setting back; a module's settings as a profile).
+
+Builds (UART and USB) without warnings; PC tests pass. Not yet verified on hardware.
+
+## 0.21.0 — 2026‑11‑05
+
+- **Line 1's input translator is a setting** (`ID_WIFI_NET` v3, [docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4): instead of
+  relaying X2's bytes, the line can listen to its wire (TX never driven, 9600 8N1) and pass on a translation into
+  MAVLink. The choice is an optional 18th byte of the line record - saved at once, run from the next boot, forgotten
+  with the lines; a 17-byte record leaves it alone. The record a module reports grows from 18 to 21 bytes: the saved
+  choice, the one running, and a mask of the translators the build carries. **This repository's build carries none**
+  (mask 0; a choice of 1 is refused). Builds that carry one no longer need a build option to run it, so one firmware
+  serves every module of a setup.
+
+Builds (UART and USB) without warnings; PC tests pass. Not yet verified on hardware.
+
 ## 0.20.0 — 2026‑10‑23
 
 - **The radio switched off, to swap an antenna** (`ID_WIFI_RF` 0x5A, [docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4b):

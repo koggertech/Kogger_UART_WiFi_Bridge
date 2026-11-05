@@ -25,6 +25,7 @@ enum { V_ROLE = 0, V_AP, V_IP, V_LINE, V_STATS, V_CLIENTS, V_ADDR, V_PORTS };
 #define ROLE_F_REBOOT 1u   /* reboot right after the answer */
 #define ROLE_F_FORGET 2u   /* forget saved lines and own address: the new role starts from its defaults */
 #define LINE_REC      17   /* line, mode, dest, ip[4], rport, lport, baud, tx_pin, rx_pin */
+#define LINE_VIEW     21   /* + uart state, then (0.21) input translator saved / running / built */
 
 /* A change that restarts the radio or the module waits until its answer is on the air: a peer that
  * talks through the access point would otherwise never see it. */
@@ -216,9 +217,8 @@ static uint8_t uart_state(int line, const line_cfg_t *c)
         return 1;
     int8_t tx, rx;
     uline_pins(&tx, &rx);
-#if CONFIG_WB_LINE1_XLAT
-    tx = c->tx_pin; /* a listen-only line runs without its TX on purpose: only RX tells whether it runs as saved */
-#endif
+    if (uline_xlat())
+        tx = c->tx_pin; /* a listen-only line runs without its TX on purpose: only RX tells whether it runs as saved */
     if (uline_running())
         return tx == c->tx_pin && rx == c->rx_pin ? 1 : 2;
     return c->tx_pin >= 0 && c->rx_pin >= 0 ? 2 : 0;
@@ -228,7 +228,7 @@ static void send_line(int line)
 {
     line_cfg_t c;
     line_view(line, &c);
-    uint8_t q[LINE_REC + 1];
+    uint8_t q[LINE_VIEW];
     q[0] = (uint8_t)line;
     q[1] = c.mode;
     q[2] = c.dest;
@@ -239,6 +239,9 @@ static void send_line(int line)
     q[15] = (uint8_t)c.tx_pin;
     q[16] = (uint8_t)c.rx_pin;
     q[17] = uart_state(line, &c);
+    q[18] = line == 1 ? netcfg_line1_xlat() : LINE_XLAT_NONE;
+    q[19] = line == 1 && uline_xlat() ? LINE_XLAT_TELEMETRY : LINE_XLAT_NONE;
+    q[20] = line == 1 ? netcfg_xlat_built() : 0;
     send(V_LINE, q, sizeof q);
 }
 
@@ -256,14 +259,21 @@ static int line_arg(const sbp_frame_t *f, int *first, int *last)
     return 0;
 }
 
+/* A record of 17 bytes (as before 0.21) leaves line 1's input translator as it is; an 18th byte sets it: 0 none,
+ * 1 a telemetry translator this build must carry. Line 0 has none. Saved at once, run from the next boot. */
 static void set_line(const sbp_frame_t *f)
 {
     const uint8_t *p = f->payload + 4;
-    if (f->len != 4 + LINE_REC || p[0] >= NLINES) {
+    if ((f->len != 4 + LINE_REC && f->len != 4 + LINE_REC + 1) || p[0] >= NLINES) {
         sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
         return;
     }
     int line = p[0];
+    int xlat = f->len == 4 + LINE_REC + 1 ? p[LINE_REC] : -1;
+    if (xlat > 0 && (line != 1 || xlat > LINE_XLAT_TELEMETRY || !(netcfg_xlat_built() & (1u << (xlat - 1))))) {
+        sbpdev_ack(f, SBP_RESP_ERR_PAYLOAD);
+        return;
+    }
     line_cfg_t c;
     netcfg_line(line, &c); /* keeps the saved rate: a new one goes through ports.c below */
     c.mode = p[1];
@@ -288,6 +298,10 @@ static void set_line(const sbp_frame_t *f)
     /* Answered after the change: the TX task sends it at once, before the network task (lower
      * priority) closes the socket of a changed line. The other port's new rate is saved at once. */
     bool ok = relay_line_set(line, &c);
+    if (ok && line == 1 && xlat >= 0 && xlat != netcfg_line1_xlat()) {
+        ok = netcfg_set_line1_xlat((uint8_t)xlat);
+        ESP_LOGI(TAG, "line 1 input translator %d saved: %s", xlat, ok ? "runs from the next boot" : "NOT saved");
+    }
     sbpdev_ack(f, ok ? SBP_RESP_OK : SBP_RESP_ERR_RUNTIME);
     if (ok && rate && !ports_set_baud(line, baud))
         ESP_LOGW(TAG, "line %d: rate %lu not applied", line, (unsigned long)baud);

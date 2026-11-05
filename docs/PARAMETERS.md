@@ -69,6 +69,7 @@ The BOOT button held 5 s returns the port rates to their defaults, held 10 s eve
 | Peer address (fixed, TCP) | 10.0.0.10 | 10.0.0.10 |
 | Baud | `ID_UART` (921600) | 921600 (9600 … 5 000 000) |
 | Pins TX / RX | 21 / 20 (build) | 5 / 4, from {0, 1, 3, 4, 5, 6, 7, 10}, −1 = off |
+| Input translator (0.21) | none | none; others only in builds that carry them (this repository's: none); from the next boot |
 
 | Setting | Default | Range |
 |---|---|---|
@@ -76,6 +77,12 @@ The BOOT button held 5 s returns the port rates to their defaults, held 10 s eve
 | Relay destination "senders" | up to 4 senders | a sender is forgotten after 60 s of silence |
 
 Role defaults apply while a line has not been saved; saved lines are shared by both roles.
+
+### Profile record (`profctl.c`, `ID_WIFI_PROFILE`, 0.22)
+
+| Setting | Default | Range |
+|---|---|---|
+| Name of the profile loaded, fingerprint of the settings it left | none | name 1–32 bytes; written by a profile load only, erased by the full reset |
 
 ## 2. Build options (`idf.py menuconfig` → "HeadUnit Wi‑Fi bridge")
 
@@ -153,6 +160,7 @@ releases to this layout.
 | IP bridge DNS relay timeout | 5 s | `bridge.c` `DNS_TIMEOUT_MS` |
 | Text `REBOOT` delay | 0.3 s | `manager.c` |
 | Radio switched off (`ID_WIFI_RF`): stop after the answer / longest timer asked over the network / a refused start tried again | 0.2 s / 600 s / every 5 s | `manager.c`, `rfoff.h` `RFOFF_NET_MAX_S`, `manager.c` `RF_RETRY_S` |
+| Profile loaded (`ID_WIFI_PROFILE`): reboot after the answer | 0.2 s | `profctl.c` |
 | Status LED with a link: flash / dark | 100 ms / 2000 ms (polled every 50 ms) | `led.h` `LED_FLASH_MS`, `LED_PAUSE_MS` |
 | Task watchdog | 5 s, panic | ESP‑IDF default + `CONFIG_ESP_TASK_WDT_PANIC` |
 
@@ -175,6 +183,7 @@ releases to this layout.
 | Channel survey: dwell per channel / channels swept / transmitters remembered | 120 ms (50 … 1000) / 1–11 / 24 per channel | `survey.h`, `ID_WIFI_SURVEY` |
 | Manager queue / slots kept for Wi‑Fi events / a request's wait for room | 64 / 8 / 20 ms (0.14; 24 / 8 / none before) | `manager.c` `QUEUE_LEN`, `EVENT_RESERVE`, `REQ_WAIT_TICKS` |
 | Scan results kept | 32 networks | `manager.c` `MAX_SCAN` |
+| Profile: largest blob / piece / station networks | 1024 B (977 used at most) / 253 B / 8 | `profile.h` `PROFILE_MAX`, `PROFILE_NETS` |
 | DNS relay pending queries | 32 | `bridge.c` `DNS_PENDING` |
 | SLIP frame payload | 1500 B | `frame.h` |
 | Text command tag | 15 characters | `manager.c` |

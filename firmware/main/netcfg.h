@@ -75,6 +75,11 @@ void netcfg_line(int line, line_cfg_t *c);
 bool netcfg_line_ok(int line, const line_cfg_t *c);
 bool netcfg_set_line(int line, const line_cfg_t *c);
 
+/** Both lines as one pair (a profile, 0.22): checked against each other, not against the saved lines.
+ *  netcfg_lines_check: 0 fine, 1 line 0 wrong, 2 line 1 wrong, 3 both UDP on one port. */
+int netcfg_lines_check(const line_cfg_t l[2]);
+bool netcfg_set_lines(const line_cfg_t l[2]);
+
 /** X2's rate when none is saved: 921600 like X1 (0.13; 115200 before, which modules set up earlier keep). */
 #define NETCFG_BAUD1_DEFAULT 921600u
 
@@ -84,6 +89,16 @@ bool netcfg_erase_baud1(void);
 
 /** Pins usable for the second UART on ESP32-C3-MINI-1U (no strapping, flash, USB or UART0 pins). */
 bool netcfg_pin_ok(int pin);
+
+/* Line 1's input translator (0.21): instead of relaying X2's bytes, the line listens (TX never driven) to a vendor
+ * telemetry wire and passes on its translation to MAVLink. Only builds that carry a translator (private/, not in
+ * the open tree) can run one. Saved in its own key, forgotten with the lines; takes effect at the next boot. */
+#define LINE_XLAT_NONE      0
+#define LINE_XLAT_TELEMETRY 1
+
+uint8_t netcfg_line1_xlat(void);               /**< saved: LINE_XLAT_* */
+bool netcfg_set_line1_xlat(uint8_t x);         /**< refused when this build does not carry it */
+uint8_t netcfg_xlat_built(void);               /**< bit (x - 1) set for each translator x this build carries */
 
 uint8_t netcfg_addr(void);                     /**< own SBP address: saved, else 87 station / 88 AP */
 bool netcfg_set_addr(uint8_t a);               /**< 1..254; 0 and 255 are refused */

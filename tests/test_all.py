@@ -125,7 +125,8 @@ def build(tmp):
     kind, tool = find_compiler()
     srcs = [os.path.join(ROOT, 'tests', 'c_harness.c')] + [os.path.join(FW, f) for f in
                                                           ('frame.c', 'proto.c', 'sbp.c', 'kframe.c', 'kpack.c', 'mavcrc.c', 'portinfo.c',
-                                                           'bootkey.c', 'survey.c', 'linkrate.c', 'led.c', 'rfoff.c')]
+                                                           'bootkey.c', 'survey.c', 'linkrate.c', 'led.c', 'rfoff.c',
+                                                           'profile.c')]
     exe = os.path.join(tmp, 'c_harness.exe' if os.name == 'nt' else 'c_harness')
     if kind == 'gcc':
         cmd = [tool, '-std=c99', '-O2', '-Wall', '-Wextra', '-Werror', '-I', FW, '-o', exe] + srcs
@@ -458,6 +459,19 @@ def link_report_tests():
     check('py: ID_WIFI v1 of 0.14 (27 B): reset reason and 7 dropped requests', d.get('reset') == 'SW' and d.get('req_drops') == 7)
     st = SB.parse_status(bytes([0, 8]) + bytes(36) + bytes([0]))
     check('py: ID_WIFI v0 flags bit 3 = radio switched off (0.20)', st['rf_off'] and not st['auto'] and not st['saved'], st)
+    rec = bytes([1, 1, 1, 0, 0, 0, 0]) + (14445).to_bytes(2, 'little') * 2 + (921600).to_bytes(4, 'little') + \
+        bytes([5, 4, 1])
+    old = SB.parse_line(rec)
+    check('py: ID_WIFI_NET v3 of 0.20 (18 B): no translator fields', 'xlat' not in old and old['uart'] == 'running', old)
+    new = SB.parse_line(rec + bytes([1, 0, 1]))
+    check('py: ID_WIFI_NET v3 of 0.21 (21 B): translator saved, running this boot, built in',
+          (new['xlat'], new['xlat_running'], new['xlat_built']) == ('telemetry', 'none', ['telemetry']), new)
+    pub = SB.parse_line(rec + bytes([0, 0, 0]))
+    check('py: a build without a translator says so (built = [])', pub['xlat_built'] == [] and pub['xlat'] == 'none', pub)
+    p17 = SB.line_payload_from(new)
+    p18 = SB.line_payload_from(new, xlat='telemetry')
+    check('py: a record written back keeps the translator (17 bytes after the key); xlat= adds the 18th',
+          len(p17) == 4 + 17 and len(p18) == 4 + 18 and p18[-1] == 1 and p18[:-1] == p17, (len(p17), len(p18)))
 
 
 def bootkey_tests(exe):
@@ -870,6 +884,150 @@ def portinfo_tests(exe):
           and not SB.is_discovery(87, SB.mode(SB.GETTING, 0), SB.ID_VERSION))
 
 
+def test_profile(**change):
+    """A valid profile (access point) for the tests; nothing here is a real module's."""
+    p = dict(name='Test AP', role='ap', address=88, x1_baud=921600,
+             radio=dict(power_dbm=20, mode='bgn', bw=20, ps='none'),
+             ap=dict(ssid='TestNet', password='testpass1', channel=6, auth='wpa2', hidden=False, max_clients=4),
+             ip=dict(ip='10.0.0.10', mask='255.255.255.0', dhcp=True, pool_start='10.0.0.11', pool_end='10.0.0.30',
+                     lease_min=120, offer_gw=False, offer_dns=False),
+             line0=dict(mode='udp', dest='senders', ip='0.0.0.0', rport=14444, lport=14444),
+             line1=dict(mode='off', dest='senders', ip='0.0.0.0', rport=14445, lport=14445, baud=115200, tx_pin=5,
+                        rx_pin=4, xlat='none'),
+             networks=[])
+    p.update(change)
+    return p
+
+
+def profile_tests(exe):
+    """Module profile blob (firmware/main/profile.c) against host/sbpframe.profile_blob/profile_decode: the same
+    bytes both ways, the same refusal code for every broken blob, and the profile files of a local profiles/ folder
+    (none ship with this repository)."""
+    def run(blobs):
+        out = subprocess.run([exe, 'profile'], input=NL.join(b.hex() or '-' for b in blobs) + NL,
+                             stdout=subprocess.PIPE, text=True).stdout.split(NL)
+        res = []
+        for line in out:
+            f = line.split()
+            if f and f[0] == 'D':
+                res.append((int(f[1]), int(f[2], 16), bytes.fromhex(f[4]) if len(f) > 4 else None))
+        return res
+
+    E = SB.PROFILE_ERRORS.index
+    longest = test_profile(
+        name=chr(0x416) * 16, ap=dict(ssid='S' * 32, password='p' * 63, channel=11, auth='wpa2wpa3', hidden=True, max_clients=10),
+        networks=[dict(ssid='%d' % i * 32, password='%x' % i * 64) for i in range(8)])
+    station = test_profile(
+        name='Test station', role='sta', address=87, x1_baud=2000000,
+        line0=dict(mode='udp', dest='fixed', ip='10.0.0.10', rport=14444, lport=0),
+        line1=dict(mode='tcp', dest='fixed', ip='192.168.1.2', rport=5760, lport=0, baud=57600, tx_pin=-1, rx_pin=-1,
+                   xlat='telemetry'),
+        radio=dict(power_dbm=8.5, mode='lr', bw=20, ps='max'),
+        networks=[dict(ssid='Open net', password=''), dict(ssid='Home', password='12345678')])
+    good = [('access point', test_profile()), ('station, 2 networks, TCP line 1, translator', station),
+            ('the longest (32-byte name, 8 networks)', longest),
+            ('open access point without a password', test_profile(ap=dict(ssid='Open', password='', channel=1,
+                                                                            auth='open', hidden=False, max_clients=1)))]
+    blobs = [SB.profile_blob(p) for _, p in good]
+    check('profile: the longest blob is %d bytes (profile.h says 977, PROFILE_MAX %d)' % (len(blobs[2]), SB.PROFILE_MAX),
+          len(blobs[2]) == 977)
+    out = run(blobs)
+    for (name, p), b, got in zip(good, blobs, out + [None] * len(blobs)):
+        rc, d = SB.profile_decode(b)
+        check('profile: %s - py decode/encode round trip' % name, rc == 0 and SB.profile_blob(d) == b and d == p,
+              '%s %s' % (rc, d))
+        check('profile: %s - C decodes it, CRC == zlib, C re-encode == py blob' % name,
+              got is not None and got[0] == 0 and got[1] == SB.profile_crc(b) and got[2] == b, got)
+
+    def edit(b, at, new, drop=0):
+        return bytes(b[:at]) + bytes(new) + bytes(b[at + drop:])
+    base = blobs[0]
+    name_at = 1                                  # U1 length, then the name
+    after_name = 2 + base[name_at]
+    ap_ssid_at = after_name + 2 + 4 + 4 + 4      # role, address, X1 rate, radio, AP {channel, hidden, max, auth}
+    ap_pass_at = ap_ssid_at + 1 + base[ap_ssid_at]
+    nnets_at = len(base) - 1                      # no networks: the count is the last byte
+    one_net = SB.profile_blob(test_profile(networks=[dict(ssid='N', password='abcdefgh')]))
+    bad = [
+        ('empty', b'', 'format'),
+        ('format 2', edit(base, 0, [2], 1), 'format'),
+        ('name of 0 bytes', edit(base, name_at, [0], 1 + base[name_at]), 'name'),
+        ('name of 33 bytes', edit(base, name_at, [33] + [65] * 33, 1 + base[name_at]), 'name'),
+        ('a NUL inside the name', edit(base, name_at + 2, [0], 1), 'name'),
+        ('role 2', edit(base, after_name, [2], 1), 'role'),
+        ('address 0', edit(base, after_name + 1, [0], 1), 'address'),
+        ('address 255', edit(base, after_name + 1, [255], 1), 'address'),
+        ('access point name of 0 bytes', edit(base, ap_ssid_at, [0], 1 + base[ap_ssid_at]), 'format'),
+        ('access point password of 64 bytes', edit(base, ap_pass_at, [64] + [97] * 64, 1 + base[ap_pass_at]), 'format'),
+        ('9 networks', edit(base, nnets_at, [9], 1), 'nets'),
+        ('a network named with 0 bytes', edit(one_net, len(one_net) - 11, [0], 2), 'nets'),
+        ('a network password of 65 bytes', edit(one_net, len(one_net) - 9, [65] + [97] * 65, 9), 'nets'),
+        ('one byte more', base + b'x', 'format'),
+        ('one byte less', base[:-1], 'format'),
+    ]
+    out = run([b for _, b, _ in bad])
+    for (name, b, want), got in zip(bad, out + [None] * len(bad)):
+        rc, _ = SB.profile_decode(b)
+        check('profile: refused - %s: %s in C and py' % (name, want), got is not None and got[0] == E(want) == rc,
+              '%s / py %s' % (got, rc))
+    cuts = [blobs[2][:n] for n in range(len(blobs[2]))]
+    out = run(cuts)
+    ok = len(out) == len(cuts) and all(o[0] != 0 and o[0] == SB.profile_decode(c)[0] for o, c in zip(out, cuts))
+    check('profile: every shortened copy of the longest blob (%d) is refused, with the same code in C and py' % len(cuts), ok)
+    rng = random.Random(22)
+    muts = []
+    for _ in range(600):
+        b = bytearray(rng.choice(blobs))
+        for _ in range(rng.randrange(1, 4)):
+            b[rng.randrange(len(b))] = rng.choice([0, 1, 2, 9, 32, 33, 64, 65, 255, rng.randrange(256)])
+        muts.append(bytes(b))
+    out = run(muts)
+    same = len(out) == len(muts) and all(o[0] == SB.profile_decode(m)[0] for o, m in zip(out, muts))
+    ident = all(o[2] == m for o, m in zip(out, muts) if o[0] == 0)
+    taken = sum(1 for o in out if o[0] == 0)
+    check('profile: %d damaged blobs - the same code in C and py; each one taken (%d) re-encodes to itself' % (
+        len(muts), taken), same and ident and 0 < taken < len(muts))
+
+    b = blobs[2]
+    pieces = SB.profile_chunk_payloads(b)
+    check('profile: upload = begin {KEY, U2 length, U4 CRC} + pieces of <= %d bytes at their offsets' % SB.PROFILE_CHUNK,
+          SB.profile_begin_payload(b) == SB.KEY + len(b).to_bytes(2, 'little') + SB.profile_crc(b).to_bytes(4, 'little')
+          and b''.join(x[2:] for x in pieces) == b and all(len(x) <= 2 + SB.PROFILE_CHUNK for x in pieces)
+          and [int.from_bytes(x[:2], 'little') for x in pieces] == list(range(0, len(b), SB.PROFILE_CHUNK)))
+    TEST_NAME = ''.join(map(chr, (0x422, 0x435, 0x441, 0x442)))  # Cyrillic: the public tree has none
+    st = SB.parse_profile_status(bytes([3]) + (0x1234ABCD).to_bytes(4, 'little') + (200).to_bytes(2, 'little') +
+                                 (977).to_bytes(2, 'little') + bytes([len(TEST_NAME.encode())]) + TEST_NAME.encode())
+    check('profile: CONTENT v0 {flags, U4 fingerprint, U2 received, U2 announced, name} reads back',
+          st == dict(loaded=True, modified=True, fingerprint=0x1234ABCD, received=200, announced=977, name=TEST_NAME), st)
+
+    pdir = os.path.join(ROOT, 'profiles')
+    files = sorted(f for f in os.listdir(pdir) if f.endswith('.json')) if os.path.isdir(pdir) else []
+    if not files:
+        print('NOTE  profile: no local profiles/*.json - no profile files checked')
+        return
+    import json
+    presets = []
+    for f in files:
+        with open(os.path.join(pdir, f), encoding='utf-8') as fh:
+            presets.append((f, json.load(fh)))
+    pb = []
+    for f, p in presets:
+        try:
+            pb.append(SB.profile_blob(p))
+        except (KeyError, ValueError) as e:
+            pb.append(None)
+            check('profile: preset %s encodes' % f, False, repr(e))
+    out = run([b for b in pb if b is not None])
+    it = iter(out)
+    for (f, p), b in zip(presets, pb):
+        if b is None:
+            continue
+        got = next(it, None)
+        rc, d = SB.profile_decode(b)
+        check('profile: preset %s (%s) - the module would decode it and re-encode the same bytes' % (f, p['name']),
+              got is not None and got[0] == 0 and got[2] == b and rc == 0 and d == p, '%s %s' % (got and got[0], rc))
+
+
 def main():
     py_tests()
     link_report_tests()
@@ -884,6 +1042,7 @@ def main():
             bootkey_tests(exe)
             led_tests(exe)
             rfoff_tests(exe)
+            profile_tests(exe)
     failed = [n for n, ok in results if not ok]
     print(NL + '%d checks, %d failed' % (len(results), len(failed)))
     sys.exit(1 if failed else 0)

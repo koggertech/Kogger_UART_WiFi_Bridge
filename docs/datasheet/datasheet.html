@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.20.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.22.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.20.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.22.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,7 +62,7 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.20.0</b><br>2026‑10‑23<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.22.0</b><br>2026‑11‑05<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
@@ -115,7 +115,7 @@ laptops on its own network.</p>
       optional native USB Serial/JTAG build for line 0</td></tr>
   <tr><td class="k">Serial throughput</td><td>baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud, 400 KB/s at 4 Mbaud</td></tr>
   <tr><td class="k">Relay</td><td>KP1, KP2, UBX, MAVLink 1/2 (392 messages); frames ≤ 4096 B; packets ≤ 512 B; 24‑packet pool</td></tr>
-  <tr><td class="k">Control protocol</td><td>Kogger SBP (KP1): <code>ID_WIFI</code> 0x57, <code>ID_WIFI_NET</code> 0x58, <code>ID_WIFI_SURVEY</code> 0x59, <code>ID_WIFI_RF</code> 0x5A, common device IDs; IP bridge text commands over SLIP</td></tr>
+  <tr><td class="k">Control protocol</td><td>Kogger SBP (KP1): <code>ID_WIFI</code> 0x57, <code>ID_WIFI_NET</code> 0x58, <code>ID_WIFI_SURVEY</code> 0x59, <code>ID_WIFI_RF</code> 0x5A, <code>ID_WIFI_PROFILE</code> 0x5B, common device IDs; IP bridge text commands over SLIP</td></tr>
   <tr><td class="k">Firmware update</td><td>over SBP, from a wire or the network (0.17); two 1.875 MiB slots; confirmation after 60 s, rollback at 180 s</td></tr>
   <tr><td class="k">Firmware image</td><td>0.95 MB (49 % of a slot), ESP‑IDF 5.5.5</td></tr>
   <tr><td class="k">Board</td><td>20 × 30 mm, 4 layers FR4 1.2 mm, ENIG; two JST GH 4‑pin connectors; KiCad 10 project in <code>hardware/</code></td></tr>
@@ -324,6 +324,16 @@ the module is reached through that very radio. The answer leaves before the radi
 seconds left}</code> answers GETTING and SETTING. While off: <code>ID_WIFI</code> v0 IDLE with flag bit3, the LED lit
 steadily, and scans, joins, sweeps and access point changes refused with ERR_RUNTIME.</p>
 
+<h3><code>ID_WIFI_PROFILE</code> = 0x5B (0.22)</h3>
+<p>Every saved setting as one profile, so a module is never left half set up. <code>SETTING v1 {KEY, U2 length,
+U4 CRC-32}</code> begins an upload of up to 1024 bytes, <code>SETTING v2 {U2 offset, bytes}</code> carries it in
+order in pieces of up to 253 bytes, <code>SETTING v3 {KEY}</code> applies it: the module checks the whole profile
+with the rules of the single settings and either refuses (ERR_PAYLOAD and <code>CONTENT v3 {U1 reason}</code>,
+nothing saved) or saves everything at once, answers OK and reboots 200 ms later into the new configuration.
+<code>GETTING v0</code> reports the profile's name and whether a setting changed since. The blob: name, role, own
+address, X1 rate, radio, access point, address and DHCP, both lines (line 1 with its rate, pins and input
+translator) and up to 8 station networks. Passwords are never read back.</p>
+
 <h3><code>ID_WIFI_NET</code> = 0x58 (every SETTING starts with the key)</h3>
 <table>
   <tr><th>Ver.</th><th>GETTING → CONTENT</th><th>SETTING (after the key)</th></tr>
@@ -332,7 +342,8 @@ steadily, and scans, joins, sweeps and access point changes refused with ERR_RUN
       <td>the same + {U1 len, password 8–63}; empty password with security on keeps the old one</td></tr>
   <tr><td>v2</td><td>address, 20 bytes {ip[4], mask[4], U1 DHCP, pool start[4], pool end[4], U2 lease min, U1 offer bit0 gateway, bit1 DNS}</td><td>the same 20 bytes</td></tr>
   <tr><td>v3</td><td>line, 18 bytes {U1 line, U1 mode 0 off/1 UDP/2 TCP, U1 dest 0 fixed/1 senders/2 broadcast, ip[4], U2 rport,
-      U2 lport, U4 baud (running), S1 TX pin, S1 RX pin, U1 uart}; no payload: both lines</td><td>the first 17 bytes; baud sets the other line (either from the network), saved at once; ignored for the asking port's own line; pins to line 1 only</td></tr>
+      U2 lport, U4 baud (running), S1 TX pin, S1 RX pin, U1 uart}, from 0.21 21 bytes: + {U1 input translator saved, U1 running,
+      U1 translators built}; no payload: both lines</td><td>the first 17 bytes; baud sets the other line (either from the network), saved at once; ignored for the asking port's own line; pins to line 1 only; an 18th byte (0.21): line 1's input translator, from the next boot</td></tr>
   <tr><td>v4</td><td>line statistics, 57 bytes {U1 line, U1 state, ip[4], U2 peer port, U1 senders, U4 ×12: up frames, bytes,
       packets, drops; down packets, bytes, frames, drops; frames for the module; TCP connects; UART RX overflows; UART TX drops}</td><td>—</td></tr>
   <tr><td>v5</td><td>AP clients {U1 index, U1 total, MAC[6], ip[4], S1 RSSI} each; none {0, 0}</td><td>—</td></tr>
@@ -374,6 +385,8 @@ steadily, and scans, joins, sweeps and access point changes refused with ERR_RUN
   <tr><td>Periodic report from the module: CONTENT ID_WIFI v1 (23 bytes)</td><td><code class="frame">BB 55 57 09 57 17 03 CC DB 16 00 00 62 07 00 00 E0 FD 1C 00 40 EF 07 00 10 0E 00 00 01 45 0E</code><br><span class="n">CONNECTED, RSSI -52 dBm, 5851/1890 B/s, totals, uptime 3600 s, last reset: power-on</span></td></tr>
   <tr><td>Radio off for 60 s (antenna swap): SETTING ID_WIFI_RF v0 {KEY, 0, U2 60}</td><td><code class="frame">BB 55 57 82 5A 07 4A 5D 6B C9 00 3C 00 51 1A</code><br><span class="n">answer: OK, then CONTENT v0 {0, U2 60}; the radio stops 200 ms later and comes back by itself</span></td></tr>
   <tr><td>Radio on now: SETTING ID_WIFI_RF v0 {KEY, 1, 0}</td><td><code class="frame">BB 55 57 82 5A 07 4A 5D 6B C9 01 00 00 16 A5</code></td></tr>
+  <tr><td>Which profile the module carries: GETTING ID_WIFI_PROFILE v0</td><td><code class="frame">BB 55 57 03 5B 00 B5 1B</code><br><span class="n">answer: CONTENT v0 {flags: bit0 loaded, bit1 changed since; U4 fingerprint; U2, U2 upload in progress; name}</span></td></tr>
+  <tr><td>Apply an uploaded profile: SETTING ID_WIFI_PROFILE v3 {KEY}</td><td><code class="frame">BB 55 57 9A 5B 04 4A 5D 6B C9 2B 02</code><br><span class="n">answer: OK, CONTENT v3 {0} and CONTENT v0, then the reboot; or ERR_PAYLOAD and CONTENT v3 {reason}, nothing changed</span></td></tr>
   <tr><td>Update, step 1: SETTING ID_BOOT v0 {KEY}</td><td><code class="frame">BB 55 57 82 24 04 4A 5D 6B C9 DC 10</code><br><span class="n">opens the 5 s update window</span></td></tr>
   <tr><td>Update, step 2: SETTING ID_UPDATE v0 {U2 1, 4 data bytes}</td><td><code class="frame">BB 55 57 82 25 06 01 00 E9 05 02 2F 24 36</code><br><span class="n">chunks up to 253 data bytes, numbered from 1; the first bytes of an ESP-IDF image are E9 ..</span></td></tr>
   <tr><td>Update, step 3: SETTING ID_BOOT v1 {KEY}</td><td><code class="frame">BB 55 57 8A 24 04 4A 5D 6B C9 E4 48</code><br><span class="n">checks the image, answers OK and reboots</span></td></tr>

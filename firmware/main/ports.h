@@ -32,6 +32,9 @@ bool ports_baud_ok(uint32_t baud);
  */
 bool ports_set_baud(int port, uint32_t baud);
 
+/** Save a port's rate without switching to it: it applies at the next boot (a profile, 0.22). */
+bool ports_save_baud(int port, uint32_t baud);
+
 /** ID_FLASH v0: save the current rates of both ports (every change is saved anyway since 0.15). */
 bool ports_save_all(void);
 

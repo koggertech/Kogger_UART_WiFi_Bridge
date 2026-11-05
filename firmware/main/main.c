@@ -171,7 +171,7 @@ void app_main(void)
     relay_init();           /* line buffers + saved configuration: the RX tasks may feed it at once */
     line_cfg_t l1;
     netcfg_line(1, &l1);
-    uline_start(&l1);       /* second connector, if its pins are configured */
+    uline_start(&l1, netcfg_line1_xlat()); /* second connector, if its pins are configured */
     sbpdev_load();          /* own address, report period, saved rates, one-shot resume record */
     relay_set_netif(net);
     relay_start();          /* own address and SBP lock: before any frame is judged */

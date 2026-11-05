@@ -46,4 +46,11 @@ bool radio_cfg_ok(const radio_cfg_t *c);
  */
 bool radio_set(const radio_cfg_t *c, bool *reconnect);
 
+/**
+ * Save for the next boot without touching the running interface (a profile, profctl.h: the module reboots
+ * into it). Checked as radio_set, a power above the maximum stored as the maximum; radio_get reports it from
+ * now on. Returns false if not valid or not saved.
+ */
+bool radio_store(const radio_cfg_t *c);
+
 void radio_get(radio_cfg_t *c, radio_now_t *now);

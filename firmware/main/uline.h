@@ -11,10 +11,14 @@
 
 #include "netcfg.h"
 
-/** Install UART1 with the line's pins and baud rate and start its tasks. */
-bool uline_start(const line_cfg_t *c);
+/** Install UART1 with the line's pins and baud rate and start its tasks; `xlat` = the saved input translator
+ *  (LINE_XLAT_*), run when this build carries it. */
+bool uline_start(const line_cfg_t *c, uint8_t xlat);
 
 bool uline_running(void);
+
+/** The line runs an input translator: it only listens, and its input goes to the relay translated. */
+bool uline_xlat(void);
 
 /** Queue one complete unit for the UART, all or nothing. */
 bool uline_tx_frame(const uint8_t *d, size_t n);

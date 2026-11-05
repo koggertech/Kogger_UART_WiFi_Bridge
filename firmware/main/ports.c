@@ -94,6 +94,11 @@ bool ports_set_baud(int port, uint32_t baud)
     return ok;
 }
 
+bool ports_save_baud(int port, uint32_t baud)
+{
+    return ok_port(port) && ports_baud_ok(baud) && save(port, baud);
+}
+
 bool ports_save_all(void)
 {
     bool ok = save0(link_baud());

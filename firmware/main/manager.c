@@ -27,6 +27,7 @@
 #include "ota.h"
 #include "portinfo.h"
 #include "ports.h"
+#include "profctl.h"
 #include "proto.h"
 #include "radio.h"
 #include "relay.h"
@@ -494,22 +495,24 @@ static void known_load(void)
     ESP_LOGI(TAG, "%d saved network(s)%s", S.nknown, e == ESP_ERR_NVS_NOT_FOUND ? ": the factory one" : "");
 }
 
-static void known_save(void)
+static bool known_save(void)
 {
     nvs_handle_t h;
     known_blob_t *b = calloc(1, sizeof *b);
     if (!b || nvs_open("wb", NVS_READWRITE, &h) != ESP_OK) {
         free(b);
-        return;
+        return false;
     }
     b->version = 1;
     b->n = (uint8_t)S.nknown;
     b->seq = S.seq;
     memcpy(b->e, S.known, sizeof S.known);
-    if (nvs_set_blob(h, "known", b, sizeof *b) != ESP_OK || nvs_commit(h) != ESP_OK)
+    bool ok = nvs_set_blob(h, "known", b, sizeof *b) == ESP_OK && nvs_commit(h) == ESP_OK;
+    if (!ok)
         ESP_LOGE(TAG, "saving networks failed");
     nvs_close(h);
     free(b);
+    return ok;
 }
 
 static int known_find(const char *ssid)
@@ -537,6 +540,31 @@ static void known_put(const char *ssid, const char *pass)
     strlcpy(S.known[i].pass, pass, sizeof S.known[i].pass);
     S.known[i].seq = ++S.seq;
     known_save();
+}
+
+int manager_known_get(profile_net_t *out, int max)
+{
+    int n = S.nknown < max ? S.nknown : max;
+    for (int i = 0; i < n; i++) {
+        strlcpy(out[i].ssid, S.known[i].ssid, sizeof out[i].ssid);
+        strlcpy(out[i].pass, S.known[i].pass, sizeof out[i].pass);
+    }
+    return n;
+}
+
+bool manager_known_set(const profile_net_t *nets, int n)
+{
+    if (n < 0 || n > MAX_KNOWN)
+        return false;
+    memset(S.known, 0, sizeof S.known);
+    for (int i = 0; i < n; i++) {
+        strlcpy(S.known[i].ssid, nets[i].ssid, sizeof S.known[i].ssid);
+        strlcpy(S.known[i].pass, nets[i].pass, sizeof S.known[i].pass);
+        S.known[i].seq = (uint32_t)(n - i); /* the first one is the newest */
+    }
+    S.nknown = n;
+    S.seq = (uint32_t)n;
+    return known_save();
 }
 
 static bool known_remove(const char *ssid)
@@ -1725,6 +1753,8 @@ static void handle_sbp(const sbp_frame_t *f)
         netctl_handle(f);
     else if (f->id == SBP_ID_WIFI_RF)
         sbp_rf(f);
+    else if (f->id == SBP_ID_WIFI_PROFILE)
+        profctl_handle(f);
     /* other ids: not ours, ignored like the sonars do */
 }
 

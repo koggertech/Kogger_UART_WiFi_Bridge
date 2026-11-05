@@ -21,6 +21,7 @@ static ip_cfg_t s_ip = { .ip = AP_IP_DEFAULT, .mask = { 255, 255, 255, 0 }, .dhc
  * pin 2 -> R11 -> GPIO4 RX). Each role turns both lines on below (a module an earlier firmware has run
  * keeps them off in the station role). The rates here are defaults only: the running rates belong to
  * ports.c. */
+static uint8_t s_xlat1; /* line 1's saved input translator, LINE_XLAT_* */
 static line_cfg_t s_line[NLINES] = {
     { .mode = LINE_OFF, .dest = DEST_SENDERS, .rport = 14444, .lport = 14444, .baud = 921600, .tx_pin = 21, .rx_pin = 20 },
     { .mode = LINE_OFF, .dest = DEST_SENDERS, .rport = 14445, .lport = 14445, .baud = NETCFG_BAUD1_DEFAULT, .tx_pin = 5, .rx_pin = 4 },
@@ -172,6 +173,8 @@ void netcfg_load(void)
             }
         }
     }
+    if (nvs_get_u8(h, "l1xlat", &v) == ESP_OK && v <= LINE_XLAT_TELEMETRY)
+        s_xlat1 = v;
     /* X2's saved rate is a port setting: kept apart from the line record, so "forget lines" keeps it */
     uint32_t b1;
     bool b1_saved = nvs_get_u32(h, "baud1", &b1) == ESP_OK;
@@ -235,7 +238,7 @@ bool netcfg_forget_lines(void)
     nvs_handle_t h;
     if (nvs_open("wb", NVS_READWRITE, &h) != ESP_OK)
         return false;
-    static const char *const KEYS[] = { "line0", "line1", "maddr", "relay" }; /* "relay" would migrate back */
+    static const char *const KEYS[] = { "line0", "line1", "maddr", "relay", "l1xlat" }; /* "relay" would migrate back */
     for (size_t i = 0; i < sizeof KEYS / sizeof KEYS[0]; i++)
         nvs_erase_key(h, KEYS[i]);
     bool ok = nvs_commit(h) == ESP_OK;
@@ -357,6 +360,54 @@ bool netcfg_line_ok(int line, const line_cfg_t *c)
     /* two UDP lines cannot listen on the same port */
     const line_cfg_t *o = &s_line[line ^ 1];
     return !(c->mode == LINE_UDP && o->mode == LINE_UDP && eff_lport(c) == eff_lport(o));
+}
+
+uint8_t netcfg_xlat_built(void)
+{
+#if CONFIG_WB_LINE1_XLAT
+    return 1u << (LINE_XLAT_TELEMETRY - 1);
+#else
+    return 0;
+#endif
+}
+
+uint8_t netcfg_line1_xlat(void)
+{
+    return s_xlat1;
+}
+
+bool netcfg_set_line1_xlat(uint8_t x)
+{
+    if (x > LINE_XLAT_TELEMETRY || (x != LINE_XLAT_NONE && !(netcfg_xlat_built() & (1u << (x - 1)))))
+        return false;
+    nvs_handle_t h;
+    if (nvs_open("wb", NVS_READWRITE, &h) != ESP_OK)
+        return false;
+    bool ok = nvs_set_u8(h, "l1xlat", x) == ESP_OK && nvs_commit(h) == ESP_OK;
+    nvs_close(h);
+    if (ok)
+        s_xlat1 = x;
+    return ok;
+}
+
+int netcfg_lines_check(const line_cfg_t l[2])
+{
+    if (!line_ok_self(0, &l[0]))
+        return 1;
+    if (!line_ok_self(1, &l[1]))
+        return 2;
+    return l[0].mode == LINE_UDP && l[1].mode == LINE_UDP && eff_lport(&l[0]) == eff_lport(&l[1]) ? 3 : 0;
+}
+
+bool netcfg_set_lines(const line_cfg_t l[2])
+{
+    if (netcfg_lines_check(l) != 0)
+        return false;
+    if (!put_blob("line0", &l[0], sizeof l[0]) || !put_blob("line1", &l[1], sizeof l[1]))
+        return false;
+    s_line[0] = l[0];
+    s_line[1] = l[1];
+    return true;
 }
 
 bool netcfg_set_line(int line, const line_cfg_t *c)

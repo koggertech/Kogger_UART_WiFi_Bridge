@@ -30,6 +30,7 @@ static const char *TAG = "uline";
 #define LINE_TICKS(ms) (pdMS_TO_TICKS(ms) > 0 ? pdMS_TO_TICKS(ms) : 1) /* never 0 ticks at HZ=100 */
 
 static bool s_run;
+static bool s_xlat;                     /* an input translator runs (uline_start): listen only, nothing relayed raw */
 static int8_t s_tx_pin = -1, s_rx_pin = -1;
 static QueueHandle_t s_evq;
 static uint8_t *s_ring;
@@ -45,14 +46,17 @@ bool uline_running(void)
     return s_run;
 }
 
+bool uline_xlat(void)
+{
+    return s_xlat;
+}
+
 static bool tx_put(const uint8_t *d, size_t n, size_t reserve)
 {
-#if CONFIG_WB_LINE1_XLAT
-    if (s_run && n) {
+    if (s_xlat && s_run && n) {
         s_st.tx_drops++; /* a listen-only line: nothing is ever sent on it */
         return false;
     }
-#endif
     if (!s_run || n == 0)
         return s_run;
     xSemaphoreTake(s_mux, portMAX_DELAY);
@@ -85,9 +89,8 @@ bool uline_tx_relay(const uint8_t *d, size_t n)
 
 bool uline_set_baud(uint32_t baud)
 {
-#if CONFIG_WB_LINE1_XLAT
-    return false; /* the translated line has the rate of its source */
-#endif
+    if (s_xlat)
+        return false; /* the translated line has the rate of its source */
     if (!s_run || baud < LINK_BAUD_MIN || baud > LINK_BAUD_MAX)
         return false;
     xSemaphoreTake(s_mux, portMAX_DELAY);
@@ -145,7 +148,8 @@ static void rx_task(void *arg)
     for (;;) {
         if (xQueueReceive(s_evq, &ev, LINE_TICKS(LONG_IDLE_MS)) != pdTRUE) {
 #if CONFIG_WB_LINE1_XLAT
-            linexlat_idle(esp_timer_get_time()); /* long silence only: a UART timeout can come inside a frame */
+            if (s_xlat)
+                linexlat_idle(esp_timer_get_time()); /* long silence only: a UART timeout can come inside a frame */
 #endif
             relay_line_idle(1, true);
             continue;
@@ -156,10 +160,11 @@ static void rx_task(void *arg)
                 s_st.rx_bytes += (uint32_t)n;
                 portinfo_rx_bytes(1, (size_t)n);
 #if CONFIG_WB_LINE1_XLAT
-                linexlat_bytes(buf, (size_t)n, esp_timer_get_time());
-#else
-                relay_line_bytes(1, buf, (size_t)n);
+                if (s_xlat)
+                    linexlat_bytes(buf, (size_t)n, esp_timer_get_time());
+                else
 #endif
+                    relay_line_bytes(1, buf, (size_t)n);
             }
             if (ev.timeout_flag)
                 relay_line_idle(1, false);
@@ -171,7 +176,7 @@ static void rx_task(void *arg)
     }
 }
 
-bool uline_start(const line_cfg_t *c)
+bool uline_start(const line_cfg_t *c, uint8_t xlat)
 {
     if (s_run)
         return true;
@@ -182,8 +187,13 @@ bool uline_start(const line_cfg_t *c)
     uint32_t baud = c->baud;
     int tx_pin = c->tx_pin;
 #if CONFIG_WB_LINE1_XLAT
-    baud = LINEXLAT_BAUD;
-    tx_pin = UART_PIN_NO_CHANGE; /* a tap never drives the wire it listens to */
+    if (xlat == LINE_XLAT_TELEMETRY) {
+        s_xlat = true;
+        baud = LINEXLAT_BAUD;
+        tx_pin = UART_PIN_NO_CHANGE; /* a tap never drives the wire it listens to */
+    }
+#else
+    (void)xlat; /* no translator in this build: a saved choice left by another build is not run */
 #endif
     const uart_config_t cfg = {
         .baud_rate = (int)baud,
@@ -214,11 +224,10 @@ bool uline_start(const line_cfg_t *c)
     s_run = true;
     xTaskCreate(tx_task, "uline_tx", 2560, NULL, 11, &s_tx);
     xTaskCreate(rx_task, "uline_rx", 3584, NULL, 12, NULL);
-#if CONFIG_WB_LINE1_XLAT
-    ESP_LOGI(TAG, "line 1: UART1 RX %d @ %lu, listen-only, translated", c->rx_pin, (unsigned long)baud);
-#else
-    ESP_LOGI(TAG, "line 1: UART1 TX %d RX %d @ %lu", c->tx_pin, c->rx_pin, (unsigned long)c->baud);
-#endif
+    if (s_xlat)
+        ESP_LOGI(TAG, "line 1: UART1 RX %d @ %lu, listen-only, translated", c->rx_pin, (unsigned long)baud);
+    else
+        ESP_LOGI(TAG, "line 1: UART1 TX %d RX %d @ %lu", c->tx_pin, c->rx_pin, (unsigned long)c->baud);
     return true;
 }
 

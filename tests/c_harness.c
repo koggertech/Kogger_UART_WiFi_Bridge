@@ -16,6 +16,7 @@
  *                               "P0 hex" / "P1 hex" per page
  *   c_harness led SEQ [MS]   -> status LED per 50 ms poll ('l' = linked): '*' lit, '.' dark
  *   c_harness rfoff          -> stdin "parse NET HEX" -> "P code on secs"; "state ON LEFT" -> "S hex"
+ *   c_harness profile        -> stdin a profile blob in hex per line -> "D rc crc32 [len hex-of-re-encode]"
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +28,7 @@
 #include "kpack.h"
 #include "led.h"
 #include "portinfo.h"
+#include "profile.h"
 #include "proto.h"
 #include "rfoff.h"
 #include "sbp.h"
@@ -294,6 +296,25 @@ int main(int argc, char **argv)
                 hex(out, n);
                 printf("\n");
             }
+        }
+        return 0;
+    }
+    if (argc >= 2 && !strcmp(argv[1], "profile")) { /* stdin: a blob in hex per line (- = empty) */
+        static char line[4 * PROFILE_MAX];
+        static uint8_t blob[PROFILE_MAX + 64], out[PROFILE_MAX];
+        static profile_t p;
+        while (fgets(line, sizeof line, stdin)) {
+            int n = line[0] == '-' ? 0 : unhex(line, blob, sizeof blob);
+            if (n < 0)
+                continue;
+            int rc = profile_decode(blob, (size_t)n, &p);
+            printf("D %d %08lx", rc, (unsigned long)profile_crc32(blob, (size_t)n));
+            if (rc == PROFILE_OK) {
+                size_t k = profile_encode(&p, out, sizeof out);
+                printf(" %u ", (unsigned)k);
+                hex(out, k);
+            }
+            printf("\n");
         }
         return 0;
     }

@@ -5,6 +5,7 @@ mode = type | ver << 3 | mark << 6 | resp << 7 (as in KoggerApp ProtoBinOut). St
 Contract of the Wi-Fi module: docs/SBP_WIFI.md.
 """
 import struct
+import zlib
 
 CONTENT, SETTING, GETTING = 1, 2, 3
 KEY_CONFIRM = 0xC96B5D4A
@@ -15,8 +16,8 @@ ID_UART, ID_VERSION, ID_MARK, ID_FLASH, ID_BOOT, ID_WIFI = 0x18, 0x20, 0x21, 0x2
 ID_WIFI_NET = 0x58
 ID_WIFI_SURVEY = 0x59
 ID_WIFI_RF = 0x5A          # radio off and back on (0.20)
+ID_WIFI_PROFILE = 0x5B     # a whole profile loaded at once (0.22)
 BOARD_WIFI = 87      # board number of the module in ID_VERSION
-BOARD_WIFI = 87
 
 
 def fletcher(data):
@@ -255,27 +256,41 @@ def ipcfg_payload(ip, mask='255.255.255.0', dhcp=True, pool_start='0.0.0.0', poo
             struct.pack('<H', lease_min) + bytes([(1 if offer_gw else 0) | (2 if offer_dns else 0)]))
 
 
+LINE_XLATS = ['none', 'telemetry']   # line 1's input translator (0.21); 'telemetry' only where the build has it
+
+
 def parse_line(p):
-    """ID_WIFI_NET CONTENT v3: one line."""
+    """ID_WIFI_NET CONTENT v3: one line. From 0.21 (21 bytes) also line 1's input translator: xlat = saved,
+    xlat_running = this boot, xlat_built = the translators this build carries (list of names)."""
     if len(p) < 18:
         raise ValueError('bad v3 length %d' % len(p))
     rport, lport, baud = struct.unpack('<HHI', p[7:15])
-    return dict(line=p[0], mode=LINE_MODES[p[1]] if p[1] < 3 else p[1], dest=LINE_DESTS[p[2]] if p[2] < 3 else p[2],
-                ip=_ip(p[3:7]), rport=rport, lport=lport, baud=baud, tx_pin=_i8(p[15]), rx_pin=_i8(p[16]),
-                uart=['off', 'running', 'next_boot'][p[17]] if p[17] < 3 else p[17])
+    d = dict(line=p[0], mode=LINE_MODES[p[1]] if p[1] < 3 else p[1], dest=LINE_DESTS[p[2]] if p[2] < 3 else p[2],
+             ip=_ip(p[3:7]), rport=rport, lport=lport, baud=baud, tx_pin=_i8(p[15]), rx_pin=_i8(p[16]),
+             uart=['off', 'running', 'next_boot'][p[17]] if p[17] < 3 else p[17])
+    if len(p) >= 21:
+        name = lambda v: LINE_XLATS[v] if v < len(LINE_XLATS) else v  # noqa: E731
+        d.update(xlat=name(p[18]), xlat_running=name(p[19]),
+                 xlat_built=[LINE_XLATS[i + 1] for i in range(len(LINE_XLATS) - 1) if p[20] >> i & 1])
+    return d
 
 
-def line_payload(line, mode='udp', dest='senders', ip='0.0.0.0', rport=0, lport=0, baud=115200, tx_pin=-1, rx_pin=-1):
-    return (KEY + bytes([line, LINE_MODES.index(mode), LINE_DESTS.index(dest)]) + _ipb(ip) +
-            struct.pack('<HHIbb', rport, lport, baud, tx_pin, rx_pin))
+def line_payload(line, mode='udp', dest='senders', ip='0.0.0.0', rport=0, lport=0, baud=115200, tx_pin=-1, rx_pin=-1,
+                 xlat=None):
+    """SETTING v3. xlat None leaves line 1's input translator as it is (the 17-byte record of every version);
+    'none' or 'telemetry' sets it (0.21: an 18th byte; saved at once, run from the next boot)."""
+    p = (KEY + bytes([line, LINE_MODES.index(mode), LINE_DESTS.index(dest)]) + _ipb(ip) +
+         struct.pack('<HHIbb', rport, lport, baud, tx_pin, rx_pin))
+    return p if xlat is None else p + bytes([LINE_XLATS.index(xlat)])
 
 
 def line_payload_from(d, **change):
-    """SETTING payload from a parse_line() result with some fields changed."""
+    """SETTING payload from a parse_line() result with some fields changed. The translator is written only
+    when `xlat` is among the changes: a record read and written back never changes it."""
     x = dict(d)
     x.update(change)
     return line_payload(x['line'], x['mode'], x['dest'], x['ip'], x['rport'], x['lport'], x['baud'], x['tx_pin'],
-                        x['rx_pin'])
+                        x['rx_pin'], change.get('xlat'))
 
 
 LINE_COUNTERS = ['up_frames', 'up_bytes', 'up_packets', 'up_drops', 'down_packets', 'down_bytes', 'down_frames',
@@ -464,3 +479,201 @@ def parse_port(p):
             peers.append(dict(ip=_ip(e[0:4]), port=pt, age=_age(age)))
         return dict(port=port, page=2, mode=p[2], state=LINE_STATES[p[3]] if p[3] < 4 else p[3], peers=peers)
     raise ValueError('unknown v7 page %d' % page)
+
+
+# ---- ID_WIFI_PROFILE (0.22): a whole profile, mirror of firmware/main/profile.c (docs/SBP_WIFI.md) ----------
+#
+# A profile as a dict (tools/profile.py keeps the same as a JSON file):
+#   name (1..32 bytes UTF-8), role 'sta'|'ap', address (1..254), x1_baud,
+#   radio {power_dbm, mode (RADIO_MODES), bw 20|40, ps 'none'|'min'|'max'},
+#   ap {ssid, password, channel, auth (AP_AUTHS), hidden, max_clients},
+#   ip {ip, mask, dhcp, pool_start, pool_end, lease_min, offer_gw, offer_dns},
+#   line0 {mode, dest, ip, rport, lport}, line1 {the same, baud, tx_pin, rx_pin, xlat (LINE_XLATS)},
+#   networks [{ssid, password}] (0..PROFILE_NETS; the first is tried first).
+# A name field may also be given as its number (a test can write a value the module must refuse).
+
+PROFILE_FORMAT = 1
+PROFILE_MAX = 1024
+PROFILE_NETS = 8
+PROFILE_CHUNK = 200      # bytes per upload piece (SETTING v2 = U2 offset + piece; an SBP payload holds 255)
+PROFILE_ERRORS = ['ok', 'incomplete', 'crc', 'format', 'name', 'role', 'address', 'x1_baud', 'radio', 'ap', 'ip',
+                  'line0', 'line1', 'lines', 'xlat', 'nets', 'busy']
+PS_NAMES = ['none', 'min', 'max']
+
+
+def _code(names, v):
+    return v if isinstance(v, int) and not isinstance(v, bool) else names.index(v)
+
+
+def _name(names, v):
+    return names[v] if v < len(names) else v
+
+
+def _pstr(v, lo, hi, what):
+    b = v.encode('utf-8') if isinstance(v, str) else bytes(v)
+    if not lo <= len(b) <= hi:
+        raise ValueError('%s: %d bytes, %d..%d allowed' % (what, len(b), lo, hi))
+    return bytes([len(b)]) + b
+
+
+def _pline(d):
+    return (bytes([_code(LINE_MODES, d['mode']), _code(LINE_DESTS, d['dest'])]) + _ipb(d.get('ip', '0.0.0.0')) +
+            struct.pack('<HH', d['rport'], d.get('lport', 0)))
+
+
+def profile_blob(pr):
+    """Profile dict -> blob (format 1, firmware/main/profile.h). Lengths are checked here; the values the module
+    checks itself (pins, channels, rates, ports) only there: the apply answer names the first wrong part."""
+    r, a, ip, l1 = pr['radio'], pr['ap'], pr['ip'], pr['line1']
+    mode = r['mode'] if isinstance(r['mode'], int) else {v: k for k, v in RADIO_MODES.items()}[r['mode']]
+    if r['bw'] not in (20, 40):
+        raise ValueError('radio bw: 20 or 40')
+    out = bytes([PROFILE_FORMAT]) + _pstr(pr['name'], 1, 32, 'name')
+    out += bytes([_code(ROLES, pr['role']), pr['address']]) + struct.pack('<I', pr['x1_baud'])
+    out += bytes([int(round(r['power_dbm'] * 4)), mode, 2 if r['bw'] == 40 else 1, _code(PS_NAMES, r['ps'])])
+    out += bytes([a['channel'], int(a.get('hidden', False)), a.get('max_clients', 4), _code(AP_AUTHS, a['auth'])])
+    out += _pstr(a['ssid'], 1, 32, 'ap ssid') + _pstr(a.get('password', ''), 0, 63, 'ap password')
+    out += (_ipb(ip['ip']) + _ipb(ip['mask']) + bytes([int(ip.get('dhcp', True))]) + _ipb(ip['pool_start']) +
+            _ipb(ip['pool_end']) + struct.pack('<H', ip.get('lease_min', 120)) +
+            bytes([(1 if ip.get('offer_gw') else 0) | (2 if ip.get('offer_dns') else 0)]))
+    out += _pline(pr['line0']) + _pline(l1)
+    out += struct.pack('<Ibb', l1['baud'], l1['tx_pin'], l1['rx_pin']) + bytes([_code(LINE_XLATS, l1.get('xlat', 'none'))])
+    nets = pr.get('networks', [])
+    if len(nets) > PROFILE_NETS:
+        raise ValueError('networks: %d, at most %d' % (len(nets), PROFILE_NETS))
+    out += bytes([len(nets)])
+    for n in nets:
+        out += _pstr(n['ssid'], 1, 32, 'network ssid') + _pstr(n.get('password', ''), 0, 64, 'network password')
+    if len(out) > PROFILE_MAX:
+        raise ValueError('profile of %d bytes, at most %d' % (len(out), PROFILE_MAX))
+    return out
+
+
+class _Rd:
+    """profile.c's reader: a read past the end marks the blob bad and yields zeros."""
+
+    def __init__(self, b):
+        self.b, self.at, self.bad = bytes(b), 0, False
+
+    def u8(self):
+        if self.at + 1 > len(self.b):
+            self.bad = True
+            return 0
+        self.at += 1
+        return self.b[self.at - 1]
+
+    def u16(self):
+        v = self.u8()
+        return v | self.u8() << 8
+
+    def u32(self):
+        v = self.u16()
+        return v | self.u16() << 16
+
+    def raw(self, k):
+        if self.at + k > len(self.b):
+            self.bad = True
+            return bytes(k)
+        self.at += k
+        return self.b[self.at - k:self.at]
+
+    def str(self, lo, hi):
+        k = self.u8()
+        if self.bad or k < lo or k > hi or self.at + k > len(self.b) or 0 in self.b[self.at:self.at + k]:
+            self.bad = True
+            return None
+        self.at += k
+        return self.b[self.at - k:self.at].decode('utf-8', 'replace')
+
+
+def _rline(r):
+    return dict(mode=_name(LINE_MODES, r.u8()), dest=_name(LINE_DESTS, r.u8()), ip=_ip(r.raw(4)), rport=r.u16(),
+                lport=r.u16())
+
+
+def profile_decode(b):
+    """Blob -> (code, profile dict or None): profile.c's checks in its order, so the code is the module's own for
+    what the layout rules out (PROFILE_ERRORS: format, name, nets, role, address)."""
+    e = PROFILE_ERRORS.index
+    r = _Rd(b)
+    if r.u8() != PROFILE_FORMAT:
+        return e('format'), None
+    name = r.str(1, 32)
+    if name is None:
+        return e('name'), None
+    role, address, x1 = r.u8(), r.u8(), r.u32()
+    rad = r.raw(4)
+    ch, hidden, maxc, auth = r.u8(), r.u8(), r.u8(), r.u8()
+    ssid = r.str(1, 32)
+    pw = r.str(0, 63) if ssid is not None else None
+    if pw is None:
+        return e('format'), None
+    ipb, mask, dhcp, ps, pe = r.raw(4), r.raw(4), r.u8(), r.raw(4), r.raw(4)
+    lease, offer = r.u16(), r.u8()
+    l0, l1 = _rline(r), _rline(r)
+    l1.update(baud=r.u32(), tx_pin=_i8(r.u8()), rx_pin=_i8(r.u8()), xlat=_name(LINE_XLATS, r.u8()))
+    nn = r.u8()
+    if r.bad:
+        return e('format'), None
+    if nn > PROFILE_NETS:
+        return e('nets'), None
+    nets = []
+    for _ in range(nn):
+        s = r.str(1, 32)
+        p = r.str(0, 64) if s is not None else None
+        if p is None:
+            return e('nets'), None
+        nets.append(dict(ssid=s, password=p))
+    if r.bad or r.at != len(r.b):
+        return e('format'), None
+    if role > 1:
+        return e('role'), None
+    if address in (0, 255):
+        return e('address'), None
+    return 0, dict(
+        name=name, role=ROLES[role], address=address, x1_baud=x1,
+        radio=dict(power_dbm=rad[0] / 4, mode=RADIO_MODES.get(rad[1], rad[1]),
+                   bw={1: 20, 2: 40}.get(rad[2], rad[2]), ps=_name(PS_NAMES, rad[3])),
+        ap=dict(ssid=ssid, password=pw, channel=ch, auth=_name(AP_AUTHS, auth), hidden=bool(hidden) if hidden < 2 else hidden,
+                max_clients=maxc),
+        ip=dict(ip=_ip(ipb), mask=_ip(mask), dhcp=bool(dhcp) if dhcp < 2 else dhcp, pool_start=_ip(ps), pool_end=_ip(pe),
+                lease_min=lease, offer_gw=bool(offer & 1), offer_dns=bool(offer & 2)),
+        line0=l0, line1=l1, networks=nets)
+
+
+def profile_crc(blob):
+    """CRC-32 (ISO-HDLC, zlib's) of a blob: the upload check (SETTING v1)."""
+    return zlib.crc32(bytes(blob)) & 0xFFFFFFFF
+
+
+def profile_begin_payload(blob):
+    """ID_WIFI_PROFILE SETTING v1: a new upload of len(blob) bytes."""
+    return KEY + struct.pack('<HI', len(blob), profile_crc(blob))
+
+
+def profile_chunk_payloads(blob, size=PROFILE_CHUNK):
+    """ID_WIFI_PROFILE SETTING v2 payloads, in order (send each after the previous one's OK)."""
+    return [struct.pack('<H', o) + bytes(blob[o:o + size]) for o in range(0, len(blob), size)]
+
+
+def profile_apply_payload():
+    """ID_WIFI_PROFILE SETTING v3: check whole, save, reboot."""
+    return KEY
+
+
+def parse_profile_status(p):
+    """ID_WIFI_PROFILE CONTENT v0: the profile the module was loaded with (name '' and loaded False: none since
+    0.22 or since the settings were cleared), whether a setting changed since, the fingerprint of the settings as
+    the profile left them, and an upload in progress (received of announced bytes)."""
+    if len(p) < 10 or len(p) < 10 + p[9]:
+        raise ValueError('bad ID_WIFI_PROFILE v0 length %d' % len(p))
+    fp, got, total = struct.unpack('<IHH', p[1:9])
+    return dict(loaded=bool(p[0] & 1), modified=bool(p[0] & 2), fingerprint=fp, received=got, announced=total,
+                name=p[10:10 + p[9]].decode('utf-8', 'replace'))
+
+
+def parse_profile_reason(p):
+    """ID_WIFI_PROFILE CONTENT v3: why the last apply was refused ('ok' = it was saved and the module reboots)."""
+    if len(p) < 1:
+        raise ValueError('bad ID_WIFI_PROFILE v3 length %d' % len(p))
+    return _name(PROFILE_ERRORS, p[0])

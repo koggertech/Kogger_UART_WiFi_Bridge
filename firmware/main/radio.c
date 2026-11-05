@@ -118,6 +118,19 @@ bool radio_set(const radio_cfg_t *req, bool *reconnect)
     return true;
 }
 
+bool radio_store(const radio_cfg_t *req)
+{
+    if (!radio_cfg_ok(req))
+        return false;
+    radio_cfg_t c = *req;
+    if (c.power > POWER_MAX)
+        c.power = POWER_MAX;
+    if (!save(&c))
+        return false;
+    s_cfg = c; /* not applied: radio_post_start sets it again after the next connection if no reboot comes */
+    return true;
+}
+
 void radio_get(radio_cfg_t *c, radio_now_t *now)
 {
     *c = s_cfg;

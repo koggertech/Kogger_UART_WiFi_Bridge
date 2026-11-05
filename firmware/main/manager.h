@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include "esp_netif.h"
+#include "profile.h"
 #include "sbp.h"
 #include "sbpdev.h"
 
@@ -38,3 +39,9 @@ bool manager_linked(void);
 
 /** The radio is switched off on request (ID_WIFI_RF, rfoff.h): nothing may start it but the manager. */
 bool manager_rf_off(void);
+
+/** Saved networks in their order, for a profile (profile.h); manager task only. Returns how many. */
+int manager_known_get(profile_net_t *out, int max);
+
+/** Replace the saved networks with these (a profile); manager task only. Returns false if not saved. */
+bool manager_known_set(const profile_net_t *nets, int n);
