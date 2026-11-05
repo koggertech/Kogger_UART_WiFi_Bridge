@@ -19,7 +19,7 @@ Newest first. `ID_VERSION` carries only major.minor, so every release raises the
 - Python helpers in `host/sbpframe.py`; bench tool `tools/profile.py` (which profile a module carries; load one and
   read every setting back; a module's settings as a profile).
 
-Builds (UART and USB) without warnings; PC tests pass. Not yet verified on hardware.
+Builds (UART and USB) without warnings; PC tests pass. Verified on hardware (2026-11-05): runs on a module and works.
 
 ## 0.21.0 — 2026‑11‑05
 
