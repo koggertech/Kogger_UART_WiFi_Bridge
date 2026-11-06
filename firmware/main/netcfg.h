@@ -91,8 +91,9 @@ bool netcfg_erase_baud1(void);
 bool netcfg_pin_ok(int pin);
 
 /* Line 1's input translator (0.21): instead of relaying X2's bytes, the line listens (TX never driven) to a vendor
- * telemetry wire and passes on its translation to MAVLink. Only builds that carry a translator (private/, not in
- * the open tree) can run one. Saved in its own key, forgotten with the lines; takes effect at the next boot. */
+ * telemetry wire and passes on its translation to MAVLink. Only builds that carry a translator can run one
+ * (CONFIG_WB_LINE1_XLAT; the default build carries GODIO F9 telemetry, docs/GODIO_F9.md). Saved in its own key,
+ * forgotten with the lines; takes effect at the next boot. */
 #define LINE_XLAT_NONE      0
 #define LINE_XLAT_TELEMETRY 1
 

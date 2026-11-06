@@ -21,6 +21,10 @@ Firmware for a small ESP32‑C3‑MINI‑1U board that puts serial devices on Wi
   host without a Wi‑Fi adapter; the daemon is in `host/`.
 - **Safe updates.** Two firmware slots, the image is checked before the switch, and an image that does not
   prove itself is rolled back automatically.
+- **GODIO boat telemetry.** Line 1 can listen to the controller wire of a GODIO boat and pass on its position,
+  heading and supply voltage as MAVLink ([docs/GODIO_F9.md](docs/GODIO_F9.md)).
+- **Reproducible build.** The same sources and ESP‑IDF give the same image byte for byte, so a release
+  file can be checked by building its tag.
 
 ![Architecture](docs/img/architecture.svg)
 
@@ -36,7 +40,7 @@ UDP. On the same port the module answers its own SBP address 87 and sends its Wi
 In the access‑point role the same board can be the boat‑side end: it bridges a sonar or autopilot
 UART to phones and laptops on its own network.
 
-## Key figures (firmware 0.22.0)
+## Key figures (firmware 0.23.0)
 
 | | |
 |---|---|
@@ -50,9 +54,10 @@ UART to phones and laptops on its own network.
 | Antenna swap | the radio switched off over SBP until a timer (needed when asked over the network, up to 600 s), an "on" request or a reboot (0.20) |
 | Status LED | lit steadily without a link, a 100 ms flash every 2.1 s with one (0.20) |
 | Profiles | every saved setting loaded as one profile: checked whole, saved at once, then a reboot into it; the module reports the profile's name and whether a setting changed since (0.22) |
+| Line 1 translator | GODIO F9 telemetry → MAVLink 2 (position, heading, voltage, satellites), listen‑only; a setting (0.21), in this repository's build from 0.23 |
 | Update | over SBP, from a wire or (since 0.17) the network; A/B slots of 1.875 MiB; SHA‑256 check; confirmation after 60 s, rollback at 180 s |
 | Factory settings | station knowing the network `KoggerBridge` (build options `WB_FACTORY_SSID` / `WB_FACTORY_PASS`), lines relaying to 10.0.0.10:14444 / 14445; BOOT held 5 s resets the port rates, 10 s every setting |
-| Image size | 0.95 MB, 49 % of a slot (0.20.0, UART build) |
+| Image size | 0.97 MB, 49 % of a slot (0.23.0, UART build); reproducible: no build date, time or path in it |
 | Serial throughput | baud / 10 bytes per second each way: 92 KB/s at 921600, 200 KB/s at 2 Mbaud |
 
 The serial line, not Wi‑Fi, is the bottleneck at these rates. Measured figures, test conditions and charts
@@ -69,6 +74,7 @@ are in the [datasheet](docs/KoggerWiFi_datasheet.pdf) and in [docs/DESIGN.md](do
 | [docs/NETWORK.md](docs/NETWORK.md) | station / access point, AP settings, address and DHCP, UART lines and their ports |
 | [docs/RELAY.md](docs/RELAY.md) | frame‑aware relay: framing, packing, buffers, back‑pressure, statistics |
 | [docs/UPDATE.md](docs/UPDATE.md) | firmware update over SBP: procedure, safety argument, test log |
+| [docs/GODIO_F9.md](docs/GODIO_F9.md) | line 1 on a GODIO boat's telemetry wire: wiring, F9 frames, the MAVLink sent, the boat's profile |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | IP bridge: SLIP framing, text commands, host daemon |
 | [docs/PARAMETERS.md](docs/PARAMETERS.md) | every setting with default and range, build options, timing constants, buffers |
 | [docs/DESIGN.md](docs/DESIGN.md) | architecture, tasks, memory, ESP‑IDF pitfalls, measurements, open issues |
@@ -84,7 +90,8 @@ are in the [datasheet](docs/KoggerWiFi_datasheet.pdf) and in [docs/DESIGN.md](do
 | `firmware/` | ESP‑IDF project (C) |
 | `host/` | Linux daemon for the IP bridge, CLI client, udev/systemd/NetworkManager files; Python mirrors of the wire formats |
 | `tests/` | PC tests: the Python mirrors against the firmware's portable C, compiled on the PC, byte for byte |
-| `tools/` | bench tools: flashing, SBP/relay/ping checks, update and packaging, charts and datasheet |
+| `tools/` | bench tools: flashing, SBP/relay/ping checks, update and packaging, charts and datasheet; `gps_sniffer/`, an identifier of unknown serial lines |
+| `profiles/` | module profiles for `tools/profile.py`: a GODIO boat |
 | `hardware/` | KiCad 10 project of the reference board and its fabrication outputs |
 | `docs/` | documentation, charts, datasheet |
 | `LICENSES/` | license notices of included third‑party material (MAVLink generated code) |
@@ -97,7 +104,8 @@ Just to put the firmware on a board: download `KoggerWiFiFlasher_EN.exe` and `Ko
 To build:
 
 ```
-python tests/test_all.py                       # PC tests, no hardware: "43 checks, 0 failed"
+python tests/test_all.py                       # PC tests, no hardware: "... checks, 0 failed"
+python tests/test_f9.py                        # the GODIO F9 translator, the same way
 cd firmware
 idf.py -B build-uart -D SDKCONFIG=build-uart/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.uart" build
 ```

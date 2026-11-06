@@ -1,0 +1,6 @@
+# A build inside this folder (idf.py without -B) must not be committed: it carries local paths.
+build*/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/

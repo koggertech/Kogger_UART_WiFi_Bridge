@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Kogger Wi-Fi Bridge datasheet</title>
-<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.22.0 for ESP32-C3-MINI-1U">
+<meta name="description" content="Datasheet of the Kogger Wi-Fi Bridge firmware 0.23.0 for ESP32-C3-MINI-1U">
 <style>
   :root {
     --ink: #1c2530;
@@ -17,7 +17,7 @@
   @page {
     size: A4;
     margin: 14mm 14mm 15mm 14mm;
-    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.22.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
+    @bottom-left { content: "Kogger Wi-Fi Bridge · firmware 0.23.0 · KOGGER LLC · kogger.tech · MIT License"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
     @bottom-right { content: "page " counter(page) " of " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5b6673; }
   }
   html { background: #ffffff; }
@@ -62,7 +62,7 @@
     <h1>Kogger Wi‑Fi Bridge</h1>
     <div class="sub">ESP32‑C3 UART ↔ Wi‑Fi module firmware · datasheet</div>
   </div>
-  <div class="meta">Firmware <b>0.22.0</b><br>2026‑11‑05<br>KOGGER LLC · kogger.tech<br>MIT License</div>
+  <div class="meta">Firmware <b>0.23.0</b><br>2026‑11‑06<br>KOGGER LLC · kogger.tech<br>MIT License</div>
 </div>
 
 <h2>Overview</h2>
@@ -87,6 +87,7 @@ An optional <b>IP bridge</b> (SLIP + NAT) gives a Linux host without Wi‑Fi an 
   <li>Radio control: power 2–20 dBm, b/g/n, 20/40 MHz, LR, power save</li>
   <li>Safe update from a wire or the network (0.17): A/B slots, SHA‑256, automatic rollback</li>
   <li>Link report with Wi‑Fi traffic and the last reset reason</li>
+  <li>GODIO boat telemetry (0.23): line 1 listens to the controller's wire and sends position, heading and voltage as MAVLink</li>
 </ul>
 </div>
 <div>
@@ -117,7 +118,7 @@ laptops on its own network.</p>
   <tr><td class="k">Relay</td><td>KP1, KP2, UBX, MAVLink 1/2 (392 messages); frames ≤ 4096 B; packets ≤ 512 B; 24‑packet pool</td></tr>
   <tr><td class="k">Control protocol</td><td>Kogger SBP (KP1): <code>ID_WIFI</code> 0x57, <code>ID_WIFI_NET</code> 0x58, <code>ID_WIFI_SURVEY</code> 0x59, <code>ID_WIFI_RF</code> 0x5A, <code>ID_WIFI_PROFILE</code> 0x5B, common device IDs; IP bridge text commands over SLIP</td></tr>
   <tr><td class="k">Firmware update</td><td>over SBP, from a wire or the network (0.17); two 1.875 MiB slots; confirmation after 60 s, rollback at 180 s</td></tr>
-  <tr><td class="k">Firmware image</td><td>0.95 MB (49 % of a slot), ESP‑IDF 5.5.5</td></tr>
+  <tr><td class="k">Firmware image</td><td>0.97 MB (49 % of a slot), ESP‑IDF 5.5.5, reproducible build</td></tr>
   <tr><td class="k">Board</td><td>20 × 30 mm, 4 layers FR4 1.2 mm, ENIG; two JST GH 4‑pin connectors; KiCad 10 project in <code>hardware/</code></td></tr>
   <tr><td class="k">Supply</td><td>4.5–24 V on X1 pin 4 (reverse‑polarity diode, TI LMZM23601 3.3 V / 1 A module); consumption not measured</td></tr>
 </table>

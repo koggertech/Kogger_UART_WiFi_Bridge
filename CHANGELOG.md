@@ -3,6 +3,33 @@
 Newest first. `ID_VERSION` carries only major.minor, so every release raises the second number
 ([docs/UPDATE.md](docs/UPDATE.md)). "Verified" means checked on hardware.
 
+## 0.23.0 — 2026‑11‑06
+
+- **One firmware for every module: the GODIO F9 translator is part of this repository**
+  ([docs/GODIO_F9.md](docs/GODIO_F9.md)).
+  - What it does: line 1 listens to the controller → receiver telemetry wire of a GODIO boat (F9 frames, 9600 8N1,
+    never driven). It passes on position, heading, supply voltage and satellites as MAVLink 2 (`GPS_RAW_INT`,
+    `GLOBAL_POSITION_INT`, `BATTERY_STATUS`, `ATTITUDE`, `HEARTBEAT`). KoggerApp then shows the boat on its map and lays
+    the sonar mosaic by its heading.
+  - Up to 0.22 only builds outside this repository carried it. 0.21 made it a setting.
+  - Now this repository's build carries it (mask 1 in `ID_WIFI_NET` v3, byte 20), and the same file goes to every
+    module. A module whose line 1 translator is 0 (the default) works as before.
+  - Build option `WB_LINE1_GODIO_F9`, on by default.
+- **Reproducible build** (`CONFIG_APP_REPRODUCIBLE_BUILD`): no build date, time or local path in the application or
+  the bootloader. The same sources and ESP‑IDF v5.5.5 give the same image byte for byte. A release file can therefore
+  be checked by building its tag ([docs/BUILD_AND_TEST.md](docs/BUILD_AND_TEST.md) §1).
+- `profiles/boat_godio.json`: the module profile of a GODIO boat, for `tools/profile.py`. It sets up an access point
+  and line 1 on the telemetry wire with the translator.
+- `tools/gps_sniffer/`: a separate small app for the same board. It finds the pin and the rate of an unknown serial
+  line by listening only, and recognises GODIO F8/F9 frames, NMEA and UBX.
+- `tests/test_f9.py`, the translator's checks:
+  - its C against the Python mirror `host/f9.py`, byte for byte;
+  - the frame rule on random streams;
+  - with pymavlink installed, an independent decode.
+
+Builds (UART and USB) without warnings; PC tests pass. Two builds of the same sources in different folders gave
+identical application, bootloader, partition table and otadata images.
+
 ## 0.22.0 — 2026‑11‑05
 
 - **Module profiles** (`ID_WIFI_PROFILE` 0x5B, [docs/SBP_WIFI.md](docs/SBP_WIFI.md) §4c): every saved

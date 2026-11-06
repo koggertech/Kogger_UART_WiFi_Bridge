@@ -4,12 +4,16 @@
 
 ```
 python tests/test_all.py
+python tests/test_f9.py
 ```
 
-Expected: `43 checks, 0 failed`.
-- The script compiles the firmware's portable C (`frame.c`, `proto.c`, `sbp.c`, `kframe.c`, `kpack.c`, `mavcrc.c`)
-  with a host compiler.
+Expected: `0 failed` from both.
+- `test_all.py` compiles the firmware's portable C (`frame.c`, `proto.c`, `sbp.c`, `kframe.c`, `kpack.c`, `mavcrc.c`,
+  `profile.c` and more) with a host compiler.
 - It compares the C output byte for byte with the Python mirrors in `host/`.
+- `test_f9.py` does the same for the GODIO F9 translator ([GODIO_F9.md](GODIO_F9.md)): `f9.c` and `f9mav.c`
+  against `host/f9.py`. With pymavlink installed (`python -m pip install pymavlink`) it also decodes the MAVLink it
+  builds; without it those checks are skipped with a NOTE.
 - Compiler: `$CC`, else gcc/cc/clang on PATH, else MSVC (found through vswhere). Without a compiler the C part fails;
   it is never skipped silently.
 
@@ -31,6 +35,25 @@ idf.py -B build-usb -D SDKCONFIG=build-usb/sdkconfig build
 - The image is `build-uart/headunit_wifi_bridge.bin`, about 0.93 MB of a 1.875 MiB slot.
 - The version comes from `PROJECT_VER` in `firmware/CMakeLists.txt`. The environment variable `WB_VERSION` overrides it
   for test images: the update tests need two different versions.
+
+### Checking a release file
+
+The build is reproducible from 0.23 (`CONFIG_APP_REPRODUCIBLE_BUILD`): no build date, time or local path goes into
+the application or the bootloader. A release's `KoggerWiFi_X.Y.Z.ufww` is the UART build's
+`headunit_wifi_bridge.bin` unchanged; `tools/make_update.py` only checks and names it. To check a release file
+against its tag, with ESP‑IDF v5.5.5:
+
+```
+git checkout v0.23.0
+cd firmware
+idf.py -B build-uart -D SDKCONFIG=build-uart/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.uart" build
+cd ..
+python tools/make_update.py --build firmware/build-uart --out dist
+```
+
+Then compare the SHA‑256 of `dist/KoggerWiFi_0.23.0.ufww` with the one in the release notes: `certutil -hashfile
+FILE SHA256` on Windows, `sha256sum FILE` on Linux. Use a fresh build directory: an `sdkconfig` left from another
+version keeps its old settings.
 
 ## 2. Flash
 

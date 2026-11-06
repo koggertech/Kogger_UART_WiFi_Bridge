@@ -16,7 +16,7 @@
 #include "portinfo.h"
 #include "relay.h"
 #if CONFIG_WB_LINE1_XLAT
-#include "private/linexlat.h" /* line 1 input translated before the relay (not in the public tree) */
+#include "linexlat.h" /* line 1 input translated before the relay */
 #endif
 
 static const char *TAG = "uline";

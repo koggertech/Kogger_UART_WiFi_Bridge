@@ -1,0 +1,14 @@
+CONFIG_IDF_TARGET="esp32c3"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+
+# The app owns UART0 = X1 (text out, update in), as the bridge owns its link: no IDF console there.
+CONFIG_ESP_CONSOLE_NONE=y
+
+# Two OTA slots and rollback, as in the bridge: updates over X1 without BOOT (ota_push.py).
+# Changing these needs one serial flash with BOOT (bootloader + partition table).
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Keep the UART RX ISR serviceable while flash is written during an update.
+CONFIG_UART_ISR_IN_IRAM=y

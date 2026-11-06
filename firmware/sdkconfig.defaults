@@ -5,6 +5,10 @@ CONFIG_IDF_TARGET="esp32c3"
 # ESP32-C3-MINI-1U: 4 MB flash
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
+# Reproducible build (0.23): no build date, time or local path in the app or the bootloader, so the same sources
+# and the same ESP-IDF give the same files byte for byte (docs/BUILD_AND_TEST.md).
+CONFIG_APP_REPRODUCIBLE_BUILD=y
+
 # USB Serial/JTAG carries the link, so nothing else may print there.
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y

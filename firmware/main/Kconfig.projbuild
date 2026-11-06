@@ -84,7 +84,20 @@ menu "HeadUnit Wi-Fi bridge"
         string "DHCP hostname of the Wi-Fi station"
         default "headunit-wifi"
 
-    # Line translators that are not part of the open tree: absent there, nothing changes.
-    orsource "private/Kconfig"
+    config WB_LINE1_GODIO_F9
+        bool "Line 1 (X2): GODIO F9 telemetry tap, translated to MAVLink"
+        default y
+        help
+            In every build by default (0.23; before that only in builds outside this repository). A module runs
+            it only when line 1's saved input translator is 1 (ID_WIFI_NET v3, 18th byte; takes effect at the
+            next boot): X2's RX listens (9600 8N1, TX never driven) to the controller -> receiver wire of a GODIO
+            boat. F9 C4 frames (position, voltage, satellites) become MAVLink 2 GPS_RAW_INT, GLOBAL_POSITION_INT
+            and BATTERY_STATUS, F9 C0 frames (status) ATTITUDE, plus a HEARTBEAT each second while frames come;
+            line 1's relay sends them to its UDP peer. The raw F9 bytes are not relayed, and nothing is sent on
+            the line. docs/GODIO_F9.md.
+
+    config WB_LINE1_XLAT
+        bool
+        default y if WB_LINE1_GODIO_F9
 
 endmenu

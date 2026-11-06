@@ -252,10 +252,11 @@ Role, access point, address and DHCP, UART lines and their ports. The model is i
   variant). An error in any field → ERR_PAYLOAD and nothing changes. Writing back a record read earlier never moves the
   rate of the port the host sits on, even when the rate has changed since.
 - **v3, line 1's input translator (0.21).** Instead of relaying X2's bytes, the line only listens to its wire (TX never
-  driven, 9600 8N1) and passes on a translation of what it hears into MAVLink. Values: 0 none (default), 1 a telemetry
-  translator for a vendor protocol. Byte 18 is the saved choice, 19 what runs this boot, 20 a mask of the translators
-  the build carries (bit0 = 1). **This repository's build carries none:** the mask is 0, and an 18th byte of 1 is
-  refused with ERR_PAYLOAD. The choice is set by the 18th byte of a SETTING (line 0: only 0), saved at once, runs from
+  driven, 9600 8N1) and passes on a translation of what it hears into MAVLink. Values: 0 none (default), 1 GODIO F9
+  telemetry ([GODIO_F9.md](GODIO_F9.md)). Byte 18 is the saved choice, 19 what runs this boot, 20 a mask of the
+  translators the build carries (bit0 = 1). **This repository's build carries it from 0.23** (mask 1; up to 0.22 it
+  carried none, the mask was 0, and an 18th byte of 1 was refused with ERR_PAYLOAD; a build with the option
+  `WB_LINE1_GODIO_F9` off still behaves so). The choice is set by the 18th byte of a SETTING (line 0: only 0), saved at once, runs from
   the next boot, and is forgotten with the lines. A 17-byte record leaves it alone, so a record read and written back
   never changes it.
 - **v4.** The payload starts with `{U1 line, U1 state 0 off/1 no Wi‑Fi/2 no peer/3 ready, ip[4], U2 peer port,

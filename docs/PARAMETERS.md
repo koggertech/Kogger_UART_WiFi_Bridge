@@ -69,7 +69,7 @@ The BOOT button held 5 s returns the port rates to their defaults, held 10 s eve
 | Peer address (fixed, TCP) | 10.0.0.10 | 10.0.0.10 |
 | Baud | `ID_UART` (921600) | 921600 (9600 … 5 000 000) |
 | Pins TX / RX | 21 / 20 (build) | 5 / 4, from {0, 1, 3, 4, 5, 6, 7, 10}, −1 = off |
-| Input translator (0.21) | none | none; others only in builds that carry them (this repository's: none); from the next boot |
+| Input translator (0.21) | none | none; GODIO F9 telemetry in builds that carry it (this repository's from 0.23, [GODIO_F9.md](GODIO_F9.md)); from the next boot |
 
 | Setting | Default | Range |
 |---|---|---|
@@ -98,6 +98,7 @@ Role defaults apply while a line has not been saved; saved lines are shared by b
 | `WB_OTA_TEST_NO_CONFIRM` | n | **test only**: an image that never confirms and must be rolled back |
 | `WB_HOSTNAME` | `headunit-wifi` | DHCP hostname of the station |
 | `WB_FACTORY_SSID` / `WB_FACTORY_PASS` | `KoggerBridge` / `KoggerBridge` | factory network: joined as a station, own network as an access point (public) |
+| `WB_LINE1_GODIO_F9` | y (0.23) | line 1 can run the GODIO F9 telemetry → MAVLink translator ([GODIO_F9.md](GODIO_F9.md)); off: the build carries no translator (mask 0) |
 
 The build overlays:
 - `sdkconfig.defaults` holds the common settings;
@@ -119,6 +120,7 @@ Notable ESP‑IDF settings in `sdkconfig.defaults`:
 | `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE` | y | rollback of an unconfirmed image |
 | `CONFIG_UART_ISR_IN_IRAM` | y | UART keeps receiving while flash is erased |
 | `CONFIG_FREERTOS_HZ` | 100 (IDF default) | 10 ms tick: every wait is at least one tick, never zero |
+| `CONFIG_APP_REPRODUCIBLE_BUILD` | y (0.23) | no build date, time or local path in the app and the bootloader: the same sources and ESP‑IDF give the same files byte for byte ([BUILD_AND_TEST.md](BUILD_AND_TEST.md) §1) |
 
 ## 3. Flash layout (`partitions.csv`, 4 MB)
 

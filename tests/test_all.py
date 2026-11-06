@@ -901,8 +901,8 @@ def test_profile(**change):
 
 def profile_tests(exe):
     """Module profile blob (firmware/main/profile.c) against host/sbpframe.profile_blob/profile_decode: the same
-    bytes both ways, the same refusal code for every broken blob, and the profile files of a local profiles/ folder
-    (none ship with this repository)."""
+    bytes both ways, the same refusal code for every broken blob, and every profile file in profiles/ (this
+    repository ships the GODIO boat's)."""
     def run(blobs):
         out = subprocess.run([exe, 'profile'], input=NL.join(b.hex() or '-' for b in blobs) + NL,
                              stdout=subprocess.PIPE, text=True).stdout.split(NL)
@@ -1003,7 +1003,7 @@ def profile_tests(exe):
     pdir = os.path.join(ROOT, 'profiles')
     files = sorted(f for f in os.listdir(pdir) if f.endswith('.json')) if os.path.isdir(pdir) else []
     if not files:
-        print('NOTE  profile: no local profiles/*.json - no profile files checked')
+        print('NOTE  profile: no profiles/*.json - no profile files checked')
         return
     import json
     presets = []
